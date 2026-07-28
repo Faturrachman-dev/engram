@@ -590,6 +590,9 @@ Examples:
 				mcp.WithString("topic_key",
 					mcp.Description("New topic key (normalized internally)"),
 				),
+				mcp.WithString("project",
+					mcp.Description("New project — reassign this observation to a different project"),
+				),
 			),
 			queuedWriteHandler(writeQueue, handleUpdate(s, cfg)),
 		)
@@ -1738,6 +1741,9 @@ func handleUpdate(s *store.Store, _ MCPConfig) server.ToolHandlerFunc {
 		}
 		if v, ok := req.GetArguments()["topic_key"].(string); ok {
 			update.TopicKey = &v
+		}
+		if v, ok := req.GetArguments()["project"].(string); ok {
+			update.Project = &v
 		}
 
 		if update.Title == nil && update.Content == nil && update.Find == nil && update.Replace == nil && update.Type == nil && update.Project == nil && update.Scope == nil && update.TopicKey == nil {
