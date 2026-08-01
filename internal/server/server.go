@@ -9,6 +9,7 @@ import (
 	"crypto/hmac"
 	"crypto/subtle"
 	"database/sql"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,9 @@ import (
 )
 
 var observedGenerationError = (*store.Store).GenerationError
+
+//go:embed dashboard/*
+var dashboardFS embed.FS
 
 var loadServerStats = func(s *store.Store) (*store.Stats, error) {
 	return s.Stats()
@@ -98,7 +102,7 @@ type Server struct {
 
 func New(s *store.Store, port int) *Server {
 	srv := &Server{store: s, port: port, listen: net.Listen, version: "dev", generationInvalidated: make(chan struct{}, 1)}
-	srv.httpServer = &http.Server{Handler: srv.Handler()}
+	srv.httpServer = &http.Server{Handler: corsMiddleware(srv.Handler())}
 	srv.serve = func(ln net.Listener, h http.Handler) error { return srv.httpServer.Serve(ln) }
 	if s != nil {
 		srv.instanceID = s.InstanceID()
@@ -436,6 +440,19 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return errors.Join(err, s.Close())
 }
 
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if timing := beginHTTPWriteTiming(r); timing != nil {
@@ -459,6 +476,9 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+
+	// Dashboard
+	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 
 	// Sessions
 	s.mux.HandleFunc("POST /sessions", s.handleCreateSession)
@@ -552,6 +572,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"instance_id":  s.instanceID,
 		"capabilities": map[string]bool{"isolated_session_registration": true, "root_session_resume": true},
 	})
+}
+
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	html, _ := dashboardFS.ReadFile("dashboard/index.html")
+	w.Write(html)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
