@@ -423,7 +423,20 @@ For an accepted `POST /sync/mutations/push`, each future materialized cloud chun
 
 ### Stats / Diagnostics
 
-- `GET /stats` — Current-project memory statistics. Use `?project=<name>` or `?all_projects=true` to select scope. Store query failures return `500` with a generic JSON error (`{"error":"stats unavailable"}`), not a successful zero-count response. Store-backed project resolution failures return `500` with `{"error":"project resolution failed","code":"project_resolution_failed"}`; invalid, unknown, and ambiguous projects retain their input-error responses.
+- `GET /stats` — Current-project memory statistics. Use `?project=<name>` or `?all_projects=true` to select scope. Store query failures return `500` with a generic JSON error (`{"error":"stats unavailable"}`), not a successful zero-count response. Store-backed project resolution failures return `500` with `{"error":"project resolution failed","code":"project_resolution_failed"}`; invalid, unknown, and ambiguous projects retain their input-error responses. Returns:
+  ```json
+  {
+    "total_sessions": 120,
+    "total_observations": 100,
+    "total_created": 107,
+    "max_observation_id": 112,
+    "total_prompts": 234,
+    "projects": ["project-a", "project-b"]
+  }
+  ```
+  - `total_observations` — active (non-deleted) observations
+  - `total_created` — all observations ever created, including soft-deleted
+  - `max_observation_id` — highest ID ever assigned (IDs are autoincrement, never reused)
 - `GET /doctor` — Read-only operational diagnostics. Query: `?project=X&check=CHECK_CODE`
   - Returns the same diagnostic report envelope as `engram doctor --json` and MCP `mem_doctor`
   - `project` and `check` are optional; omitted `project` uses current project detection
