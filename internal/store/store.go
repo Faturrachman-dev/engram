@@ -257,6 +257,8 @@ type SessionSummary struct {
 type Stats struct {
 	TotalSessions     int      `json:"total_sessions"`
 	TotalObservations int      `json:"total_observations"`
+	TotalCreated      int      `json:"total_created"`
+	MaxObservationID  int64    `json:"max_observation_id"`
 	TotalPrompts      int      `json:"total_prompts"`
 	Projects          []string `json:"projects"`
 }
@@ -6017,6 +6019,12 @@ func (s *Store) statsForProject(project string) (*Stats, error) {
 		}
 		return " AND LOWER(project) = ?"
 	}(), args...).Scan(&stats.TotalObservations); err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM observations"+where, args...).Scan(&stats.TotalCreated); err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRow("SELECT COALESCE(MAX(id), 0) FROM observations"+where, args...).Scan(&stats.MaxObservationID); err != nil {
 		return nil, err
 	}
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM user_prompts"+where, args...).Scan(&stats.TotalPrompts); err != nil {
