@@ -299,6 +299,7 @@ For parameters and the complete, current tool reference, see [the full documenta
 | **[Beta Testing](docs/BETA_TESTING.md)** · **[Obsidian Brain](docs/beta/obsidian-brain.md)** | Isolated beta testing flows and cleanup guidance, and exporting memories as an Obsidian knowledge graph (beta) |
 | **[Comparison](docs/COMPARISON.md)** | Engram compared with claude-mem |
 | **[Full Docs](DOCS.md)** · **[Contributing](CONTRIBUTING.md)** | Complete CLI, environment, API, and operational reference, and the contributor workflow |
+| **[Maintainer Handoff](HANDOFF.md)** | Local fork state and cross-machine continuation notes |
 
 > **Dashboard contributors:** if you modify `.templ` files in `internal/cloud/dashboard/`, run `make templ` to regenerate before committing. See [Dashboard templ regeneration](DOCS.md#dashboard-templ-regeneration).
 
