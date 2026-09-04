@@ -2022,6 +2022,12 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       : registerEffectiveSession(ctx, sessionProject, appendEntry, fetch);
   };
 
+  // Provenance: who authored this memory, as "pi/<model>". Falls back to
+  // ENGRAM_AUTHOR when the active model is not exposed on the context.
+  const activeModel = (ctx as { model?: { id?: string; name?: string } }).model;
+  const modelId = activeModel?.id || activeModel?.name;
+  const author = modelId ? `pi/${modelId}` : (process.env.ENGRAM_AUTHOR?.trim() || undefined);
+
   switch (toolName) {
     case "mem_search":
       if (!params.all_projects && !requestedProject) requireResolvedProject();
@@ -2070,6 +2076,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
             && writeState?.currentPrompt === currentPrompt
             && currentPrompt.project === activeProject && currentPrompt.effectiveID === activeSessionId
             ? currentPrompt.content : undefined,
+          author,
         },
       });
     }
@@ -2113,6 +2120,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
           content: params.content,
           project: activeProject,
           scope: "project",
+          author,
         },
       });
     }

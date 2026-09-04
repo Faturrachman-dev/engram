@@ -475,6 +475,12 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard", http.StatusTemporaryRedirect)
+	})
+	s.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 
 	// Dashboard
@@ -535,6 +541,7 @@ func (s *Server) routes() {
 	// Project listing is read-only and mirrors the MCP mem_list_projects tool and
 	// `engram projects list`, all backed by the same ListProjectsWithStats store query.
 	s.mux.HandleFunc("GET /projects", s.handleListProjects)
+	s.mux.HandleFunc("GET /projects/stats", s.handleProjectStats)
 	s.mux.HandleFunc("GET /doctor", s.handleDoctor)
 	s.mux.HandleFunc("POST /doctor/caller-binding", s.handleCallerBinding)
 
@@ -1541,7 +1548,15 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "stats unavailable")
 		return
 	}
+	jsonResponse(w, http.StatusOK, stats)
+}
 
+func (s *Server) handleProjectStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.store.ListProjectsWithStats()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	jsonResponse(w, http.StatusOK, stats)
 }
 

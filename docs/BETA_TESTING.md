@@ -297,7 +297,7 @@ This is where your **existing** agent CLI does the work. **Your subscription pay
 
 ```bash
 # Tell engram which agent CLI to use
-export ENGRAM_AGENT_CLI=claude   # or opencode
+export ENGRAM_AGENT_CLI=claude   # or opencode, or pi (routes via your provider config — cheap)
 
 # Run scan with semantic detection
 ./engram-beta conflicts scan --project beta-test --semantic --apply \
