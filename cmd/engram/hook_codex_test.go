@@ -911,3 +911,24 @@ func TestCodexJSONToleratesResponseCloseError(t *testing.T) {
 		t.Fatalf("decoded=%q requests=%d closes=%d, want one successful request and close", decoded["project"], requests, closes)
 	}
 }
+
+// Codex renders a top-level systemMessage as a user-facing warning; hook text
+// must travel as UserPromptSubmit additionalContext so it reaches the model.
+func TestCodexMessageUsesAdditionalContextNotSystemMessage(t *testing.T) {
+	var payload struct {
+		SystemMessage      *string `json:"systemMessage"`
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(codexMessage("MEMORY REMINDER: test"), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload.SystemMessage != nil {
+		t.Fatalf("codex hook emitted systemMessage %q; it renders as a warning and never reaches the model", *payload.SystemMessage)
+	}
+	if payload.HookSpecificOutput.HookEventName != "UserPromptSubmit" || payload.HookSpecificOutput.AdditionalContext != "MEMORY REMINDER: test" {
+		t.Fatalf("unexpected hookSpecificOutput: %+v", payload.HookSpecificOutput)
+	}
+}

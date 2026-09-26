@@ -376,7 +376,15 @@ func codexNudgeAllowed(path string, now time.Time) bool {
 	}
 	return os.WriteFile(path, []byte(strconv.FormatInt(now.Unix(), 10)), 0o600) == nil
 }
+// codexMessage injects hook text as model context. Codex renders a top-level
+// systemMessage as a user-facing warning that never reaches the model, the same
+// failure mode fixed for Claude Code in issue #145.
 func codexMessage(message string) []byte {
-	output, _ := json.Marshal(map[string]string{"systemMessage": message})
+	output, _ := json.Marshal(map[string]any{
+		"hookSpecificOutput": map[string]string{
+			"hookEventName":     "UserPromptSubmit",
+			"additionalContext": message,
+		},
+	})
 	return output
 }
