@@ -116,7 +116,10 @@ func TestCodexWindowsBashHookDispatcherContract(t *testing.T) {
 	}
 }
 
-func TestCodexWindowsUserPromptManifestKeepsUnixScriptAndTimeout(t *testing.T) {
+// Prompt capture is opt-in (ENGRAM_CODEX_CAPTURE_PROMPTS=1), so the default
+// manifest registers no UserPromptSubmit hook: on Windows each hook costs a
+// shell launch per message for an empty result.
+func TestCodexUserPromptHookNotRegisteredByDefault(t *testing.T) {
 	root := repoRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "plugin", "codex", "hooks", "hooks.json"))
 	if err != nil {
@@ -126,16 +129,9 @@ func TestCodexWindowsUserPromptManifestKeepsUnixScriptAndTimeout(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("parse hooks manifest: %v", err)
 	}
-	for _, group := range manifest.Hooks["UserPromptSubmit"] {
-		for _, hook := range group.Hooks {
-			// Codex wraps Windows hooks in the user's shell (often a slow-starting Store
-			// pwsh), so the pinned prompt launch needs more than 2s.
-			if hook.Command == `"${PLUGIN_ROOT}/scripts/user-prompt-submit.sh"` && hook.Timeout == 10 {
-				return
-			}
-		}
+	if groups := manifest.Hooks["UserPromptSubmit"]; len(groups) != 0 {
+		t.Fatalf("UserPromptSubmit must not be registered by default: %+v", groups)
 	}
-	t.Fatal("UserPromptSubmit must retain the Unix script and 10-second timeout")
 }
 
 func TestCodexWindowsBashHookDispatcherRuntime(t *testing.T) {

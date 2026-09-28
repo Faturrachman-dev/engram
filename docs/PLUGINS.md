@@ -31,6 +31,10 @@ Pi sends `resume: true` for runtime-root registration and adopts only a valid ac
 - The adapter reads the setup-owned absolute pin and invokes its native hook command.
 - This path needs no Git Bash, `jq`, or `curl`.
 - The Git Bash SessionStart adapter starts a missing local server with `engram serve-background LOG_PATH` on Windows. The CLI launches `serve` with detached stdin/stdout and server stderr appended to the selected log; `engram serve` itself remains foreground. An explicit `ENGRAM_URL` leaves server startup to its external owner.
+- Prompt capture is opt-in: the default manifest registers no `UserPromptSubmit` hook, so
+  messages pay no hook launch. To capture prompts, set `ENGRAM_CODEX_CAPTURE_PROMPTS=1` and add a
+  `UserPromptSubmit` entry running `scripts/user-prompt-submit.sh` (Windows: the pinned
+  `run-native-hook.ps1` launch) with a timeout of at least 10s.
 
 ---
 

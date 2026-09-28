@@ -44,17 +44,6 @@ func TestCodexWindowsNativeUserPromptAdapterContract(t *testing.T) {
 	if decoded := string(utf16.Decode(units)); decoded != bootstrap {
 		t.Fatalf("decoded bootstrap = %q, want %q", decoded, bootstrap)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "plugin", "codex", "hooks", "hooks.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest codexHooksManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	if got := manifest.Hooks["UserPromptSubmit"][0].Hooks[0].Timeout; got != 10 {
-		t.Fatalf("UserPromptSubmit timeout = %d, want 10", got)
-	}
 
 	source, err := os.ReadFile(filepath.Join(root, "plugin", "codex", "scripts", "run-native-hook.ps1"))
 	if err != nil {
@@ -416,25 +405,19 @@ func codexNativeAdapter(t *testing.T, root string) string {
 	return codexWindowsUserPromptCommand(t, root)
 }
 
+// codexWindowsUserPromptCommand returns the pinned Windows launch for the
+// opt-in prompt hook. The default manifest no longer registers it, so the
+// command is built from the same bootstrap an opt-in manifest entry uses.
 func codexWindowsUserPromptCommand(t *testing.T, root string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, "plugin", "codex", "hooks", "hooks.json"))
-	if err != nil {
-		t.Fatal(err)
+	const prefix = `\\.\GLOBALROOT\SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand `
+	const bootstrap = `$ProgressPreference = 'SilentlyContinue'; if ($env:PLUGIN_ROOT) { & (Join-Path $env:PLUGIN_ROOT 'scripts\run-native-hook.ps1'); exit $LASTEXITCODE }`
+	units := utf16.Encode([]rune(bootstrap))
+	payload := make([]byte, len(units)*2)
+	for i, unit := range units {
+		binary.LittleEndian.PutUint16(payload[i*2:], unit)
 	}
-	var manifest codexHooksManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	for _, group := range manifest.Hooks["UserPromptSubmit"] {
-		for _, hook := range group.Hooks {
-			if hook.CommandWindows != "" {
-				return hook.CommandWindows
-			}
-		}
-	}
-	t.Fatal("missing UserPromptSubmit commandWindows")
-	return ""
+	return prefix + base64.StdEncoding.EncodeToString(payload)
 }
 
 func buildCodexWindowsEngram(t *testing.T, root, target string) string {
