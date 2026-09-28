@@ -197,11 +197,11 @@ Also search memory PROACTIVELY when:
 - Starting work on something that might have been done before
 - The user mentions a topic you have no context on — check if past sessions covered it
 
-### SESSION CLOSE PROTOCOL (mandatory)
+### SESSION CLOSE PROTOCOL
 
-Before ending a session or saying "done" / "listo" / "that's it", you MUST:
+At a genuine session close, compaction, handoff, or major milestone (not after every task or final reply):
 1. Call mem_session_summary with the structure below.
-2. Call mem_session_end with the active session id and an optional summary of work completed.
+2. At genuine session close, call mem_session_end with the active session id and an optional summary of work completed.
 
 mem_session_summary structure:
 
@@ -223,28 +223,14 @@ mem_session_summary structure:
 ## Relevant Files
 - path/to/file — [what it does or what changed]
 
-This is NOT optional. If you skip this, the next session starts blind.
-
-### PASSIVE CAPTURE — automatic learning extraction
-
-When completing a task or subtask, include a "## Key Learnings:" section at the end of your response
-with numbered items. Engram will automatically extract and save these as observations.
-
-Example:
-## Key Learnings:
-
-1. bcrypt cost=12 is the right balance for our server performance
-2. JWT refresh tokens need atomic rotation to prevent race conditions
-
-You can also call mem_capture_passive(content) directly with any text that contains a learning section.
-This is a safety net — it captures knowledge even if you forget to call mem_save explicitly.
+Do not write summaries for routine edits or trivial tasks.
 
 ### AFTER COMPACTION
 
 If you see a message about compaction or context reset, or if you see "FIRST ACTION REQUIRED" in your context:
 1. IMMEDIATELY call mem_session_summary with the compacted summary content — this persists what was done before compaction
-2. Then call mem_context to recover any additional context from previous sessions
-3. Only THEN continue working
+2. Read the compact context injected by the hook; call mem_context only if more detail is needed
+3. Continue working
 
 Do not skip step 1. Without it, everything done before compaction is lost from memory.
 `

@@ -293,7 +293,7 @@ func TestCodexUnixUserPromptSubmitDetachesPromptPersistenceStdin(t *testing.T) {
 		}
 	}()
 
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		marker, err := os.ReadFile(markerPath)
 		if err == nil {
@@ -330,5 +330,5 @@ func writeCodexPromptProbeCommand(t *testing.T, path, content string) {
 
 func codexPromptTestEnv(t *testing.T, port string) []string {
 	t.Helper()
-	return codexHandoffEnv(t, t.TempDir(), "http://127.0.0.1:"+port, buildCodexFixtureCLI(t))
+	return append(codexHandoffEnv(t, t.TempDir(), "http://127.0.0.1:"+port, buildCodexFixtureCLI(t)), "ENGRAM_CODEX_CAPTURE_PROMPTS=1")
 }

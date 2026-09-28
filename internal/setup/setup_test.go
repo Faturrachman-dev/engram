@@ -5591,3 +5591,9 @@ func TestPluginSubAgentFiltering(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryProtocolDoesNotRequireKeyLearningsInFinalReplies(t *testing.T) {
+	if strings.Contains(memoryProtocolMarkdown, "## Key Learnings:") || strings.Contains(memoryProtocolMarkdown, "PASSIVE CAPTURE") {
+		t.Fatal("memory protocol must not require a Key Learnings section in every reply")
+	}
+}

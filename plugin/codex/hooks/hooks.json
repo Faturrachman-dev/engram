@@ -8,7 +8,7 @@
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/scripts/session-start.sh\"",
             "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand JABQAHIAbwBnAHIAZQBzAHMAUAByAGUAZgBlAHIAZQBuAGMAZQAgAD0AIAAnAFMAaQBsAGUAbgB0AGwAeQBDAG8AbgB0AGkAbgB1AGUAJwA7ACAAaQBmACAAKAAkAGUAbgB2ADoAUABMAFUARwBJAE4AXwBSAE8ATwBUACkAIAB7ACAAJABzAGMAcgBpAHAAdABzACAAPQAgAEoAbwBpAG4ALQBQAGEAdABoACAAJABlAG4AdgA6AFAATABVAEcASQBOAF8AUgBPAE8AVAAgACcAcwBjAHIAaQBwAHQAcwAnADsAIAAmACAAKABKAG8AaQBuAC0AUABhAHQAaAAgACQAcwBjAHIAaQBwAHQAcwAgACcAcgB1AG4ALQBiAGEAcwBoAC0AaABvAG8AawAuAHAAcwAxACcAKQAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAHMAYwByAGkAcAB0AHMAIAAnAHMAZQBzAHMAaQBvAG4ALQBzAHQAYQByAHQALgBzAGgAJwApADsAIABlAHgAaQB0ACAAJABMAEEAUwBUAEUAWABJAFQAQwBPAEQARQAgAH0A",
-            "timeout": 10,
+            "timeout": 20,
             "statusMessage": "Loading engram memory..."
           }
         ]
@@ -20,7 +20,7 @@
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/scripts/post-compaction.sh\"",
             "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand JABQAHIAbwBnAHIAZQBzAHMAUAByAGUAZgBlAHIAZQBuAGMAZQAgAD0AIAAnAFMAaQBsAGUAbgB0AGwAeQBDAG8AbgB0AGkAbgB1AGUAJwA7ACAAaQBmACAAKAAkAGUAbgB2ADoAUABMAFUARwBJAE4AXwBSAE8ATwBUACkAIAB7ACAAJABzAGMAcgBpAHAAdABzACAAPQAgAEoAbwBpAG4ALQBQAGEAdABoACAAJABlAG4AdgA6AFAATABVAEcASQBOAF8AUgBPAE8AVAAgACcAcwBjAHIAaQBwAHQAcwAnADsAIAAmACAAKABKAG8AaQBuAC0AUABhAHQAaAAgACQAcwBjAHIAaQBwAHQAcwAgACcAcgB1AG4ALQBiAGEAcwBoAC0AaABvAG8AawAuAHAAcwAxACcAKQAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAHMAYwByAGkAcAB0AHMAIAAnAHAAbwBzAHQALQBjAG8AbQBwAGEAYwB0AGkAbwBuAC4AcwBoACcAKQA7ACAAZQB4AGkAdAAgACQATABBAFMAVABFAFgASQBUAEMATwBEAEUAIAB9AA==",
-            "timeout": 10,
+            "timeout": 20,
             "statusMessage": "Recovering engram context after compaction..."
           }
         ]
@@ -28,7 +28,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "mcp__engram__mem_*|mcp__plugin_engram_engram__mem_*",
+        "matcher": "^(mcp__engram__|mcp__plugin_engram_engram__)(mem_save|mem_update|mem_review|mem_delete|mem_save_prompt|mem_pin|mem_unpin|mem_session_summary|mem_session_start|mem_session_end|mem_capture_passive|mem_merge_projects|mem_judge|mem_compare)$",
         "hooks": [
           {
             "type": "command",
@@ -45,7 +45,7 @@
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/scripts/user-prompt-submit.sh\"",
             "commandWindows": "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand JABQAHIAbwBnAHIAZQBzAHMAUAByAGUAZgBlAHIAZQBuAGMAZQAgAD0AIAAnAFMAaQBsAGUAbgB0AGwAeQBDAG8AbgB0AGkAbgB1AGUAJwA7ACAAaQBmACAAKAAkAGUAbgB2ADoAUABMAFUARwBJAE4AXwBSAE8ATwBUACkAIAB7ACAAJgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAGUAbgB2ADoAUABMAFUARwBJAE4AXwBSAE8ATwBUACAAJwBzAGMAcgBpAHAAdABzAFwAcgB1AG4ALQBuAGEAdABpAHYAZQAtAGgAbwBvAGsALgBwAHMAMQAnACkAOwAgAGUAeABpAHQAIAAkAEwAQQBTAFQARQBYAEkAVABDAE8ARABFACAAfQA=",
-            "timeout": 2
+            "timeout": 10
           }
         ]
       }

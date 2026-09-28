@@ -1516,7 +1516,7 @@ This is NOT optional. If you skip this, the next session starts blind.
 
 ### PASSIVE CAPTURE
 
-When completing a task, include a `## Key Learnings:` section at the end of your response with numbered items. Engram will automatically extract and save these as observations.
+`mem_capture_passive(content)` can extract numbered observations from a `## Key Learnings:` section when explicitly called. Do not add that section to every user-facing response; save durable findings directly with `mem_save` instead.
 
 Example:
 
@@ -1527,14 +1527,14 @@ Example:
 2. JWT refresh tokens need atomic rotation to prevent race conditions
 ```
 
-You can also call `mem_capture_passive(content)` directly with any text that contains a learning section.
+This extraction feature remains available for deliberate imports of existing learning notes.
 
 ### AFTER COMPACTION
 
 If you see a message about compaction or context reset:
 
 1. IMMEDIATELY call `mem_session_summary` with the compacted summary content
-2. Then call `mem_context` to recover additional context from previous sessions
+2. Read the compact context injected by the hook; call `mem_context` only if more detail is needed
 3. Only THEN continue working
 
 Do not skip step 1. Without it, everything done before compaction is lost from memory.

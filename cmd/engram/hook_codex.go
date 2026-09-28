@@ -51,6 +51,15 @@ func runCodexUserPromptSubmitIO(input io.Reader, output io.Writer, baseURL, stat
 }
 
 func runCodexUserPromptSubmit(input []byte, baseURL, stateDir string, now func() time.Time) []byte {
+	// Raw prompts may contain credentials or private data. Codex prompt capture
+	// is opt-in; the default hook must not inspect, persist, or delay prompts.
+	if os.Getenv("ENGRAM_CODEX_CAPTURE_PROMPTS") != "1" {
+		return []byte("{}")
+	}
+	return runCodexUserPromptSubmitLegacy(input, baseURL, stateDir, now)
+}
+
+func runCodexUserPromptSubmitLegacy(input []byte, baseURL, stateDir string, now func() time.Time) []byte {
 	var in codexPromptInput
 	valid := json.Unmarshal(input, &in) == nil
 	key := in.SessionID
@@ -376,6 +385,7 @@ func codexNudgeAllowed(path string, now time.Time) bool {
 	}
 	return os.WriteFile(path, []byte(strconv.FormatInt(now.Unix(), 10)), 0o600) == nil
 }
+
 // codexMessage injects hook text as model context. Codex renders a top-level
 // systemMessage as a user-facing warning that never reaches the model, the same
 // failure mode fixed for Claude Code in issue #145.

@@ -53,8 +53,8 @@ func TestCodexWindowsBashHookDispatcherContract(t *testing.T) {
 				}
 				if want, ok := wantMappings[hook.Command]; ok {
 					seenMappings[hook.Command] = true
-					if hook.Timeout != 10 || !strings.HasPrefix(hook.CommandWindows, prefix) || strings.ContainsAny(hook.CommandWindows, `"'`) {
-						t.Errorf("%s hook must retain timeout 10 and quote-free pinned launch: %q", event, hook.CommandWindows)
+					if hook.Timeout != 20 || !strings.HasPrefix(hook.CommandWindows, prefix) || strings.ContainsAny(hook.CommandWindows, `"'`) {
+						t.Errorf("%s hook must use timeout 20 and quote-free pinned launch: %q", event, hook.CommandWindows)
 						continue
 					}
 					payload, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(hook.CommandWindows, prefix))
@@ -128,12 +128,14 @@ func TestCodexWindowsUserPromptManifestKeepsUnixScriptAndTimeout(t *testing.T) {
 	}
 	for _, group := range manifest.Hooks["UserPromptSubmit"] {
 		for _, hook := range group.Hooks {
-			if hook.Command == `"${PLUGIN_ROOT}/scripts/user-prompt-submit.sh"` && hook.Timeout == 2 {
+			// Codex wraps Windows hooks in the user's shell (often a slow-starting Store
+			// pwsh), so the pinned prompt launch needs more than 2s.
+			if hook.Command == `"${PLUGIN_ROOT}/scripts/user-prompt-submit.sh"` && hook.Timeout == 10 {
 				return
 			}
 		}
 	}
-	t.Fatal("UserPromptSubmit must retain the Unix script and 2-second timeout")
+	t.Fatal("UserPromptSubmit must retain the Unix script and 10-second timeout")
 }
 
 func TestCodexWindowsBashHookDispatcherRuntime(t *testing.T) {

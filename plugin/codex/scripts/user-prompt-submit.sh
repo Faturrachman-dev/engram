@@ -13,6 +13,13 @@
 #
 # MUST exit 0 always and output valid JSON — otherwise Codex blocks the message.
 
+# User prompts can contain secrets. Never persist or inspect them unless the
+# user has explicitly opted in to automatic Codex prompt capture.
+if [ "${ENGRAM_CODEX_CAPTURE_PROMPTS:-}" != "1" ]; then
+  printf '%s\n' '{}'
+  exit 0
+fi
+
 ENGRAM_PORT="${ENGRAM_PORT:-7437}"
 ENGRAM_URL="${ENGRAM_URL:-http://127.0.0.1:${ENGRAM_PORT}}"
 

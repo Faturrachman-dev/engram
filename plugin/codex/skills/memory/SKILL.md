@@ -91,9 +91,9 @@ Also search memory PROACTIVELY when:
 
 Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
 
-## SESSION CLOSE PROTOCOL (mandatory)
+## SESSION CLOSE PROTOCOL
 
-Before ending a session or saying "done" / "that's it", you MUST:
+At a genuine session close, compaction, handoff, or major milestone (not every final reply):
 1. Call `mem_session_summary` with this structure:
 
 ## Goal
@@ -114,7 +114,7 @@ Before ending a session or saying "done" / "that's it", you MUST:
 ## Relevant Files
 - path/to/file — [what it does or what changed]
 
-This is NOT optional. If you skip this, the next session starts blind.
+Do not write summaries for routine edits or trivial tasks.
 
 ## AFTER COMPACTION
 

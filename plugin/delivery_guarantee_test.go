@@ -13,8 +13,9 @@ func TestMemoryProtocolDeliveryGuarantee(t *testing.T) {
 		"plugin/claude-code/scripts/session-start.sh",
 		"plugin/claude-code/scripts/post-compaction.sh",
 		"plugin/claude-code/skills/memory/SKILL.md",
-		"plugin/codex/scripts/session-start.sh",
-		"plugin/codex/scripts/post-compaction.sh",
+		// Codex hook scripts no longer repeat the protocol; it ships in the
+		// generated model instructions.
+		"internal/setup/setup.go",
 		"plugin/codex/skills/memory/SKILL.md",
 		"skills/memory-protocol/SKILL.md",
 		"DOCS.md",

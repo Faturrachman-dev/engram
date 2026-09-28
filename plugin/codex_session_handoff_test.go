@@ -166,7 +166,7 @@ func TestCodexPreToolUseManifestRegistersNativeBinder(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := manifest.Hooks["PreToolUse"]
-	if len(entries) != 1 || len(entries[0].Hooks) != 1 || entries[0].Matcher != "mcp__engram__mem_*|mcp__plugin_engram_engram__mem_*" || entries[0].Hooks[0].Command != "engram hook codex-pre-tool-use" {
+	if len(entries) != 1 || len(entries[0].Hooks) != 1 || entries[0].Matcher != "^(mcp__engram__|mcp__plugin_engram_engram__)(mem_save|mem_update|mem_review|mem_delete|mem_save_prompt|mem_pin|mem_unpin|mem_session_summary|mem_session_start|mem_session_end|mem_capture_passive|mem_merge_projects|mem_judge|mem_compare)$" || entries[0].Hooks[0].Command != "engram hook codex-pre-tool-use" {
 		t.Fatalf("unexpected Codex PreToolUse registration: %+v", entries)
 	}
 }
@@ -314,6 +314,8 @@ func TestCodexRegisteredSessionHandoff(t *testing.T) {
 						t.Fatal("hook attempted a forbidden executable or transport destination")
 					}
 					output := stdout.String()
+					// The memory protocol lives in the Codex model instructions; the hook only
+					// carries identity rules and compact context.
 					for _, want := range []string{"Never invent", "mem_session_start"} {
 						if !strings.Contains(output, want) {
 							t.Errorf("missing instruction %q", want)
@@ -366,7 +368,7 @@ func TestCodexRegisteredSessionHandoff(t *testing.T) {
 					}
 					if event == "compact" {
 						first := strings.Index(output, "1. FIRST: Call mem_session_summary")
-						then := strings.Index(output, "2. THEN: Call mem_context")
+						then := strings.Index(output, "2. Read the compact context")
 						if tc.registered {
 							if first < 0 || then <= first || strings.Index(output, marker) > first {
 								t.Error("confirmed compaction must receive identity before summary, then recover context")

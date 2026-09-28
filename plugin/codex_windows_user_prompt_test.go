@@ -52,8 +52,8 @@ func TestCodexWindowsNativeUserPromptAdapterContract(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if got := manifest.Hooks["UserPromptSubmit"][0].Hooks[0].Timeout; got != 2 {
-		t.Fatalf("UserPromptSubmit timeout = %d, want 2", got)
+	if got := manifest.Hooks["UserPromptSubmit"][0].Hooks[0].Timeout; got != 10 {
+		t.Fatalf("UserPromptSubmit timeout = %d, want 10", got)
 	}
 
 	source, err := os.ReadFile(filepath.Join(root, "plugin", "codex", "scripts", "run-native-hook.ps1"))
@@ -280,7 +280,7 @@ func TestCodexWindowsNativeUserPromptTrustedPinForwardsInputAndMeetsTimingBudget
 	port, command, stateDir := strings.TrimPrefix(server.URL, "http://127.0.0.1:"), codexNativeAdapter(t, root), t.TempDir()
 	run := func(session string) (string, time.Duration) {
 		start := time.Now()
-		stdout, stderr, code := runCodexNativeManifestCommand(t, command, `{"cwd":`+jsonQuote(t.TempDir())+`,"session_id":"`+session+`","prompt":"persist once"}`, appData, port, stateDir, t.TempDir(), nil)
+		stdout, stderr, code := runCodexNativeManifestCommand(t, command, `{"cwd":`+jsonQuote(t.TempDir())+`,"session_id":"`+session+`","prompt":"persist once"}`, appData, port, stateDir, t.TempDir(), []string{"ENGRAM_CODEX_CAPTURE_PROMPTS=1"})
 		if code != 0 || !json.Valid(stdout) || len(stderr) != 0 {
 			t.Fatalf("exit=%d stdout=%q stderr=%q, want exit 0, valid JSON, and no stderr", code, stdout, stderr)
 		}
