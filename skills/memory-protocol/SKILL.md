@@ -6,58 +6,46 @@ description: >
 license: Apache-2.0
 metadata:
   author: gentleman-programming
-  version: "1.0"
+  version: "2.0"
 ---
 
-## When to Use
+## Engram memory — compact policy
 
-Use this skill when:
-- Making architecture or implementation decisions
-- Fixing bugs with non-obvious root causes
-- Discovering patterns, gotchas, or user preferences
-- Closing a session or after compaction
+Work first; remember meaningful outcomes. Do not search, save, or judge before
+every action.
 
----
+### Retrieve when it adds missing information
 
-## Save Rules
+Use context already injected or in the conversation; do not refetch it
+because a turn begins. Retrieve when the user asks for prior work, a past
+decision matters, or avoiding rework needs information you lack. Prefer the
+smallest retrieval: recent context or one targeted search. Fetch a full
+observation only when its preview is insufficient. Route to the relevant
+project when known. A simple question may need zero memory reads.
 
-Call `mem_save` immediately after:
-- decision
-- bugfix
-- pattern/discovery
-- config/preference changes
+### Save outcomes, not an activity log
 
-Use structured content:
-- What
-- Why
-- Where
-- Learned
+Save confirmed, future-useful outcomes: significant decisions, preferences,
+non-obvious discoveries, operational state, and verified root causes or fixes.
+Group related changes into one observation per semantic owner, after the outcome
+is established. Reuse a stable `topic_key` or `mem_update` a known observation
+for an evolving subject. Do not save routine tests, listings, progress updates,
+failed experiments, speculative diagnoses, or facts cheaply recoverable from
+code. Do not force a save every turn.
 
-Use stable `topic_key` for evolving topics.
+### Safety, routing, checkpoints
 
----
+Never store credentials, cookies, tokens, account identifiers, raw captured
+traffic, or secret fragments. Choose the project by semantic owner, not cwd.
+Route personal Codex/Engram/cross-project preferences to `codex-config`, scope
+`personal`. Reuse only the authoritative registered session identity; never
+invent one.
 
-## Search Rules
+Memory operations are internal bookkeeping, never the user-facing answer.
+Complete required memory work before composing the completed-task reply;
+send the complete answer as the final message of the turn with no later tool calls.
+If memory work fails or needs follow-up, still send the answer.
 
-- On recall requests: `mem_context` first, then `mem_search`.
-- Before similar work: run proactive `mem_search`.
-- On first message: if user references the project, a feature, or a problem, call `mem_search` with their keywords before responding.
-
----
-
-## Session Close Rules
-
-Before saying done/listo:
-1. Call `mem_session_summary`.
-2. Include goal, discoveries, accomplished, next steps, relevant files.
-
-After compaction:
-1. Save summary first.
-2. Recover context.
-3. Continue work.
-
----
-
-## Delivery Guarantee
-
-Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
+Summarize only at a genuine session close or compaction, not after a normal
+reply, and never twice for one boundary. On a `COMPACTION CHECKPOINT` marker,
+save one `mem_session_summary` of the compacted work, then continue.
