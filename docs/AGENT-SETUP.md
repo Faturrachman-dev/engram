@@ -563,9 +563,9 @@ Recommended file path:
 
 The Memory Protocol tells the agent:
 
-- **When to save** — after bugfixes, decisions, discoveries, config changes, patterns
-- **When to search** — reactive ("remember", "recall") + proactive (overlapping past work)
-- **Session close** — mandatory `mem_session_summary` before ending
+- **When to save** — confirmed, future-useful outcomes (decisions, verified fixes, non-obvious discoveries, preferences), once per semantic owner
+- **When to search** — only when it adds missing information (explicit recall, a past decision that matters)
+- **Session close** — `mem_session_summary` at a genuine session close, not after every reply
 - **After compaction** — first persist the injected summary with `mem_session_summary`; request `mem_context` only if additional context is needed
 
 See [Surviving Compaction](#surviving-compaction-recommended) for the minimal version, or [DOCS.md](../DOCS.md#memory-protocol-full-text) for the full Memory Protocol text you can copy-paste.
@@ -789,7 +789,7 @@ When your agent compacts (summarizes long conversations to free context), it sta
 
 You have access to Engram persistent memory via MCP tools (mem_save, mem_search, mem_session_summary, etc.).
 
-- Save proactively after significant work — don't wait to be asked.
+- Save confirmed, future-useful outcomes once they are established — not every turn.
 - After any compaction or context reset, first persist the injected summary with `mem_session_summary`. Request `mem_context` only if additional context is needed.
 ```
 
@@ -797,7 +797,7 @@ You have access to Engram persistent memory via MCP tools (mem_save, mem_search,
 
 ```text
 After any compaction or context reset, first persist the injected summary with mem_session_summary. Request mem_context only if additional context is needed.
-Save memories proactively with mem_save after significant work.
+Save confirmed, future-useful outcomes with mem_save once established — not every turn.
 ```
 
 **For Gemini CLI** (`GEMINI.md`):
@@ -807,7 +807,7 @@ Save memories proactively with mem_save after significant work.
 
 You have access to Engram persistent memory via MCP tools (mem_save, mem_search, mem_session_summary, etc.).
 
-- Save proactively after significant work — don't wait to be asked.
+- Save confirmed, future-useful outcomes once they are established — not every turn.
 - After any compaction or context reset, first persist the injected summary with `mem_session_summary`. Request `mem_context` only if additional context is needed.
 ```
 
@@ -818,7 +818,7 @@ You have access to Engram persistent memory via MCP tools (mem_save, mem_search,
 
 You have access to Engram persistent memory via MCP tools (mem_save, mem_search, mem_session_summary, etc.).
 
-- Save proactively after significant work — don't wait to be asked.
+- Save confirmed, future-useful outcomes once they are established — not every turn.
 - After any compaction or context reset, first persist the injected summary with `mem_session_summary`. Request `mem_context` only if additional context is needed.
 ```
 
@@ -829,7 +829,7 @@ You have access to Engram persistent memory via MCP tools (mem_save, mem_search,
 
 You have access to Engram persistent memory via MCP tools (mem_save, mem_search, mem_session_summary, etc.).
 
-- Save proactively after significant work — don't wait to be asked.
+- Save confirmed, future-useful outcomes once they are established — not every turn.
 - After any compaction or context reset, first persist the injected summary with `mem_session_summary`. Request `mem_context` only if additional context is needed.
 ```
 
@@ -837,14 +837,14 @@ You have access to Engram persistent memory via MCP tools (mem_save, mem_search,
 
 ```text
 You have access to Engram persistent memory (mem_save, mem_search, mem_context, mem_session_summary).
-Save proactively after significant work. After context resets, first persist the injected summary with mem_session_summary. Request mem_context only if additional context is needed.
+Save confirmed outcomes once established, not every turn. After context resets, first persist the injected summary with mem_session_summary. Request mem_context only if additional context is needed.
 ```
 
 **For Windsurf** (`.windsurfrules`):
 
 ```text
 You have access to Engram persistent memory (mem_save, mem_search, mem_context, mem_session_summary).
-Save proactively after significant work. After context resets, first persist the injected summary with mem_session_summary. Request mem_context only if additional context is needed.
+Save confirmed outcomes once established, not every turn. After context resets, first persist the injected summary with mem_session_summary. Request mem_context only if additional context is needed.
 ```
 
 This is the **nuclear option** — system prompts survive everything, including compaction. Use it when you want guaranteed agent behavior without relying on plugin hooks. It is optional for agents that have a full plugin (Claude Code, OpenCode, Gemini CLI, Codex) and required for agents that do not (VS Code, Cursor, Windsurf, Antigravity).

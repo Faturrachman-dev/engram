@@ -72,9 +72,9 @@ The plugin:
 - **Resolves project identity** through the server's canonical resolver, so configured projects and repository worktrees keep their shared project identity
 - **Auto-imports** git-synced memories from `.engram/manifest.json` if present in the project
 - **Creates sessions** on-demand via `ensureSession()` (resilient to restarts/reconnects)
-- **Injects the Memory Protocol** into the agent's system prompt via `chat.system.transform` — strict rules for when to save, when to search, and a mandatory session close protocol. The protocol is concatenated into the existing system message (not pushed as a separate one), ensuring compatibility with models that only accept a single system block (Qwen, Mistral/Ministral via llama.cpp, etc.)
+- **Injects the compact memory policy** (generated from `internal/memorypolicy/policy.md`) into the agent's system prompt via `chat.system.transform`. The policy is concatenated into the existing system message (not pushed as a separate one), ensuring compatibility with models that only accept a single system block (Qwen, Mistral/Ministral via llama.cpp, etc.)
 - **Injects session-only runtime context** into the compaction prompt; manual `mem_context` and `GET /context` remain project/scope-scoped
-- **Instructs the compressor** to tell the new agent to persist the compacted summary via `mem_session_summary`
+- **Instructs the compressor** to carry one `COMPACTION CHECKPOINT` line so the new agent persists the compacted summary once via `mem_session_summary`
 - **Captures delegation learnings** from OpenCode V1 `task` output and V2 `subagent` output (normalized internally to the legacy `Task` alias), using passive capture with source `task-complete`. V1 result objects contribute their string `output` field rather than wrapper metadata; plain string results remain unchanged, and other object shapes retain JSON serialization as a fallback. Other tool results are not submitted for passive capture.
 - **Strips `<private>` tags** before sending data
 - **Enables** `opencode-subagent-statusline` in `tui.json` or `tui.jsonc` during `engram setup opencode`, adding a live sub-agent monitor to OpenCode's sidebar/home footer. To disable it later, remove `"opencode-subagent-statusline"` from the `"plugin"` array in your TUI config and restart OpenCode.
@@ -83,13 +83,13 @@ The plugin:
 
 ### Memory Protocol (injected via system prompt)
 
-The plugin injects a strict protocol into every agent message:
+The plugin injects the canonical compact policy into every agent message:
 
-- **WHEN TO SAVE**: Mandatory after bugfixes, decisions, discoveries, config changes, patterns, preferences
-- **WHEN TO SEARCH**: Reactive (user says "remember"/"recordar") + proactive (starting work that might overlap past sessions)
+- **RETRIEVE**: only when it adds missing information (explicit recall, a past decision that matters); a simple task may need zero memory reads
+- **SAVE**: confirmed, future-useful outcomes, one coherent observation per semantic owner; no per-turn save
 - **DELIVERY GUARANTEE**: Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
-- **SESSION CLOSE**: Mandatory `mem_session_summary` before ending — "This is NOT optional. If you skip this, the next session starts blind."
-- **AFTER COMPACTION**: Persist the injected session-only compaction context before requesting any additional project context
+- **CHECKPOINTS**: `mem_session_summary` only at a genuine session close or compaction, never after a normal reply
+- **AFTER COMPACTION**: Save the compacted summary once; the session-only compaction context is already injected, so no automatic `mem_context` call
 
 ### Three Layers of Memory Resilience
 
@@ -170,7 +170,7 @@ Session binding is best-effort if the host times out the PreToolUse hook: normal
 
 **On compaction** (`compact`):
 1. Injects the previous session context + compacted summary
-2. Tells the agent: "FIRST ACTION REQUIRED — call `mem_session_summary` with this content before doing anything else"
+2. Emits one `COMPACTION CHECKPOINT` line asking the agent to save the compacted summary once with `mem_session_summary`; context is already injected, so no `mem_context` call is requested
 3. This ensures no work is lost when context is compressed
 
 **On user prompt submit**:
@@ -178,9 +178,9 @@ The Bash capture paths and PowerShell fallback ask the Go server's `POST /prompt
 
 **Server compatibility:** Automatic Claude prompt capture requires an Engram server with `/prompts/capture-decision`. Older servers (404), unavailable/slow servers, and malformed or invalid decisions silently skip capture; normal hooks, first-message ToolSearch, and existing save-reminder reads continue to work. There is no local classifier fallback. Decision responses must be 2xx without redirects. Adapters reject project metadata containing path separators, ASCII controls, or surrounding whitespace; these are transport sanity checks, not project normalization. Go remains the canonical-name authority, including lowercasing and repeated separator normalization; adapters never repair server metadata.
 
-1. The first prompt injects a ToolSearch instruction so Claude Code loads Engram MCP tools before responding.
+1. The first prompt advertises the deferred Engram tools (ToolSearch select list) without forcing any memory call.
 2. Later prompts may inject a save reminder if the local Engram API is fast and available.
-3. On Windows Git Bash/MSYS2, the hook uses a bash-builtin-only safe path to avoid fork-heavy helpers (`jq`, `git`, `curl`, `date`). In that mode first-prompt ToolSearch still works, but later save reminders degrade to `{}` so prompt submission stays fast.
+3. On Windows Git Bash/MSYS2, the hook uses a bash-builtin-only safe path to avoid fork-heavy helpers (`jq`, `git`, `curl`, `date`). In that mode the first-prompt tool list still works, but later save reminders degrade to `{}` so prompt submission stays fast.
 
 If Git Bash itself is blocked by enterprise security tooling, `scripts/user-prompt-submit.ps1` is provided as a native PowerShell fallback for manual hook testing or local override. It applies only to `UserPromptSubmit`; the complete plugin setup still requires `jq` and `curl` for shared Bash hooks.
 
@@ -208,11 +208,11 @@ PowerShell local override/testing example for locked-down Windows endpoints:
 }
 ```
 
-**Memory Protocol skill** (always available):
-- Strict rules for **when to save** (mandatory after bugfixes, decisions, discoveries)
-- **When to search** memory (reactive + proactive)
-- **Session close protocol** — mandatory `mem_session_summary` before ending
-- **After compaction** — 3-step recovery: persist summary → load context → continue
+**Memory skill** (always available; generated from `internal/memorypolicy/policy.md`):
+- **Save** confirmed, future-useful outcomes once per semantic owner — not an activity log
+- **Retrieve** only when it adds missing information
+- **Checkpoints** — `mem_session_summary` only at a genuine session close or compaction
+- **After compaction** — on a `COMPACTION CHECKPOINT` marker, save the compacted summary once, then continue
 
 ---
 

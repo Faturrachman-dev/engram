@@ -356,7 +356,7 @@ After a second distinct or blank/missing runtime identity, compaction recovery p
 The next turn receives outcome-specific guidance:
 
 - **Confirmed archive:** the summary is already saved; no manual `mem_session_summary` call is needed.
-- **Definite archive failure:** the manual `FIRST ACTION REQUIRED` fallback remains available.
+- **Definite archive failure:** a single manual `COMPACTION CHECKPOINT` fallback asks the agent to save the summary once; context is already injected, so no follow-up `mem_context` call is requested.
 - **Timeout or unknown archive outcome:** verify with `mem_search` or `mem_doctor` before retrying so a possibly completed write is not duplicated.
 - **Unavailable session, project, or registration:** no attributed archive is attempted; verify the active Engram session and project before saving manually.
 

@@ -56,7 +56,7 @@ Reader and status guide:
 | MCP tool inventory                     | DOCS.md "MCP Tools"                 | `internal/mcp/mcp.go` registrations + `ProfileAgent`/`ProfileAdmin`          | `docs/ARCHITECTURE.md` tool table; `docs/AGENT-SETUP.md` setup claims; `docs/PLUGINS.md` comparison table; README.md intent table (subset) |
 | Tool input schemas                     | DOCS.md per-tool sections           | `internal/mcp/mcp.go` (live schemas); `internal/mcp/testdata/tool-contract-v1.json` (test-enforced v1 compatibility baseline; change only when intentionally changed) | (none)                                                                                                                                     |
 | SQLite schema                          | DOCS.md "Database Schema"           | `internal/store/store.go` `Store.migrate`                                    | (none)                                                                                                                                     |
-| Memory Protocol                        | `DOCS.md#memory-protocol-full-text` | (none; prose contract)                                                       | `skills/memory-protocol/SKILL.md`; `memoryProtocolMarkdown` embedded in `internal/setup`; `plugin/*/skills/memory/SKILL.md`                |
+| Memory Protocol                        | `DOCS.md#memory-protocol-full-text` | (none; prose contract)                                                       | `internal/memorypolicy/policy.md` (source); generated skills, setup instructions, OpenCode/Pi prompts |
 | Setup instructions and per-agent paths | docs/AGENT-SETUP.md                 | `internal/setup/agents.go` + `setup.go`                                      | README.md setup table                                                                                                                      |
 | Plugin contracts                       | docs/PLUGINS.md                     | `plugin/*` assets, `internal/setup/plugins/`                                 | `docs/AGENT-SETUP.md` per-agent sections                                                                                                   |
 | HTTP API and CLI                       | DOCS.md HTTP API / CLI sections     | `internal/server/server.go` (local routes); `internal/cloud/cloudserver/cloudserver.go` (cloud routes); `cmd/engram` | `docs/PLUGINS.md` conflicts table (subset)                                                                                                 |
@@ -115,7 +115,7 @@ This catalog covers the 60 tracked Markdown files. **Owner `GP`** means CODEOWNE
 | [skills/catalog.md](skills/catalog.md) | Contributor agents | Instruction: skill index | Living | GP |
 | [skills/*/SKILL.md](skills/) | Contributor agents | Instruction: domain skills | Living | GP |
 
-The memory protocol's canonical prose is [Memory Protocol](#memory-protocol-full-text); `internal/setup/setup.go` independently maintains `memoryProtocolMarkdown` for installed generated instructions. Claude and Codex plugin skill files above are manually maintained. OpenCode's source `plugin/opencode/engram.ts` has a verified generated embedded copy at `internal/setup/plugins/opencode/engram.ts`; neither is a separate Markdown catalog entry. Historical OpenSpec/SDD changes are transient, non-shipped records, not evidence of current behavior.
+The memory protocol's single source is `internal/memorypolicy/policy.md`, shown in [Memory Protocol](#memory-protocol-full-text). Setup's `memoryProtocolMarkdown`, the Claude/Codex/contributor skill files, the OpenCode/Pi plugin prompts, and the DOCS block are generated from it (`go run ./internal/memorypolicy/cmd/genskills`) and drift-tested. OpenCode's source `plugin/opencode/engram.ts` has a verified generated embedded copy at `internal/setup/plugins/opencode/engram.ts`; neither is a separate Markdown catalog entry. Historical OpenSpec/SDD changes are transient, non-shipped records, not evidence of current behavior.
 
 ---
 
@@ -1205,6 +1205,47 @@ Returns success even when cwd is ambiguous — empty `project` + non-empty `avai
 
 ---
 
+## Memory Modes (minimal vs legacy)
+
+The MCP server runs in one of two memory behavior modes, selected per process:
+
+```text
+engram mcp --memory-mode=minimal   # default
+engram mcp --memory-mode=legacy
+ENGRAM_MEMORY_MODE=minimal|legacy
+```
+
+Both `--memory-mode=value` and `--memory-mode value` are accepted. Precedence:
+explicit CLI value > `ENGRAM_MEMORY_MODE` > `minimal` default. An invalid or
+empty explicit value fails fast. `engram setup codex` writes
+`--memory-mode=minimal` explicitly so deployment never depends on an ambient
+environment variable.
+
+| Behavior | Minimal (default) | Legacy |
+|---|---|---|
+| `mem_save` conflict detection | No automatic candidate scan | Automatic `FindCandidates` scan |
+| Candidate-driven `mem_judge` work | None for ordinary saves | Surfaced via `judgment_required` |
+| `mem_save` envelope | `judgment_required=false`, `conflict_review="manual"` | `conflict_review="auto"`; candidates when found |
+| `mem_search` default representation | Compact, bounded, no relation histories | Legacy full representation |
+| Explicit review (`engram conflicts`, `mem_judge`, `mem_compare`) | Available | Available |
+| Identity / routing / persistence / privacy | Preserved | Preserved |
+
+`conflict_review="manual"` means the save was **not scanned** — not that no
+conflict exists. Request a scan explicitly with `engram conflicts scan`
+(see [Conflict Audit CLI](#conflict-audit-cli-admin)) and judge the returned
+relation IDs with `mem_judge`/`mem_compare`. Legacy mode is a compatibility
+option for response/review behavior only; it never re-enables raw prompt
+capture or weakens any safeguard.
+
+### Migration
+
+No schema change and no data migration are required. To change behavior for an
+existing deployment, set `--memory-mode=legacy` (or `ENGRAM_MEMORY_MODE=legacy`)
+and restart the MCP client; verify the effective mode in a fresh session. Roll
+back by removing the flag/env (minimal) or restoring the backed-up config.
+Existing observations and relationship rows are never purged or reclassified by
+switching modes.
+
 ## MCP Tools (23 tools)
 
 
@@ -1217,6 +1258,8 @@ Set `all_projects: true` to search across every project instead of the resolved 
 Scope values accepted by the `scope` parameter: `project` (default), `personal`, `global`. When `scope: personal` is passed without an explicit `project` override, the project filter is cleared and personal observations are searched across all projects (cross-project personal scope).
 
 Each structured search result includes lifecycle metadata: `state` (`active` or `needs_review`) and, when set, `review_after`. Text output also appends `state: needs_review` for stale observations.
+
+**Response format and byte budget.** `response_format` is `compact` or `legacy`; omit it to use the mode default (compact in minimal mode, legacy in legacy mode). Compact entries carry identity, title, concise `preview`, `created_at`, project/scope, stable `topic_key`, lifecycle `state`, and `truncated`, but omit relation histories by default. `include_relations: true` attaches `relations` (`as_source`/`as_target`) and overrides the format default; when relations are omitted the store is not queried for them. `max_bytes` (default 8192 for compact; accepted 1024–65536) bounds the serialized envelope. Compact responses always obey it; legacy responses keep their prior output unless `max_bytes` is passed explicitly. When over budget Engram trims, in order: relation histories (reporting per-entry and total `omitted_relations`), previews (rune-safe; `truncated: true`, `shortened_previews`), trailing entries (`omitted_results`), and finally the last entry down to identity fields (`reduced: true`). It never slices encoded JSON or splits UTF-8, and trimmed responses add `max_bytes` and a `more` hint (`mem_get_observation(id)` returns the full observation). The activity nudge is preserved.
 
 When an observation has judged relations in `memory_relations`, the result entry includes annotation lines immediately after the title/content block:
 
@@ -1239,13 +1282,20 @@ Save structured observations. The tool description teaches agents the format:
 - **type**: `decision` | `architecture` | `bugfix` | `pattern` | `config` | `discovery` | `learning`
 - **scope**: `project` (default) | `personal` | `global` — see [Team Usage](docs/TEAM-USAGE.md) for conventions and sync caveats
 - **topic_key**: optional canonical topic id (e.g. `architecture/auth-model`) used to upsert evolving memories
-- **capture_prompt**: optional boolean in MCP and native Pi; omission defaults to `true`. In MCP, present non-boolean values (including `"false"`, numbers, and `null`) return the exact tool error `capture_prompt must be a boolean` before project resolution or any session, observation, or prompt write; when the runtime supplies current prompt context for the same project/session, shared Go policy best-effort stores a deduplicated independent prompt row. Missing context or a capture error does not fail `mem_save`. `false` skips only this save's attempt; it does not disable Pi lifecycle capture or delete existing prompts.
+- **capture_prompt**: optional boolean, default `false` (PRD R8 privacy change). Implicit capture is off: an omitted `capture_prompt` never persists the raw user prompt. Pass `true` to explicitly opt in — when current prompt context is available in the same MCP process for the same project/session, Engram best-effort records it alongside the observation. If that context is unavailable or capture fails, `mem_save` still succeeds. Legacy mode does not re-enable implicit capture.
 - **content**: Structured with `**What**`, `**Why**`, `**Where**`, `**Learned**`; required unless the legacy `observation` alias is provided
 - **observation**: backward-compatible alias for `content` for older/raw MCP clients; prefer `content` for new integrations
 
 Exact duplicate saves are deduplicated in a rolling time window using a normalized content hash + project + scope + type + title.
 When `topic_key` is provided, `mem_save` upserts the latest observation in the same `project + scope + topic_key`, incrementing `revision_count` and attributing it to the latest writer session.
 Save responses include lifecycle metadata for the saved observation: computed `state` (`active` or `needs_review`) and `review_after` when the observation type has a review cycle. Content is redacted before the configured storage limit is applied; that limit and truncation metadata (`original_bytes`, `limit_bytes`) are UTF-8 bytes. MCP save/update responses include `truncated`, and warn when truncation occurs.
+
+In minimal mode `mem_save` reports `judgment_required=false` and
+`conflict_review="manual"` and never scans for candidates or creates pending
+relation rows. In legacy mode it reports `conflict_review="auto"` and, when
+lexical candidates are found, `judgment_required=true` with a `candidates[]`
+array (each a possible match, not a confirmed contradiction) to judge via
+`mem_judge`. See [Memory Modes](#memory-modes-minimal-vs-legacy).
 
 ### mem_update
 
@@ -1438,81 +1488,62 @@ Behavior:
 
 The Memory Protocol teaches agents **when** and **how** to use Engram's MCP tools. Without it, the agent has the tools but no behavioral guidance. Add this to your agent's prompt file (see [Agent Setup](docs/AGENT-SETUP.md) for per-agent locations).
 
-### WHEN TO SAVE (mandatory)
+The canonical policy lives in `internal/memorypolicy/policy.md`. Setup renders it into generated instructions (Codex `engram-instructions.md`, Gemini `system.md`), the shipped memory skills, and the OpenCode/Pi plugin prompts; `go run ./internal/memorypolicy/cmd/genskills` regenerates the checked-in copies and `go test ./internal/memorypolicy` fails on drift. The block below is the same generated text.
 
-Call `mem_save` IMMEDIATELY after any of these:
+<!-- BEGIN GENERATED memorypolicy -->
 
-- Bug fix completed
-- Architecture or design decision made
-- Non-obvious discovery about the codebase
-- Configuration change or environment setup
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
+### Engram memory — compact policy
 
-Format for `mem_save`:
+Work first; remember meaningful outcomes. Do not search, save, or judge before
+every action.
+
+#### Retrieve when it adds missing information
+
+Use context already injected or in the conversation; do not refetch it
+because a turn begins. Retrieve when the user asks for prior work, a past
+decision matters, or avoiding rework needs information you lack. Prefer the
+smallest retrieval: recent context or one targeted search. Fetch a full
+observation only when its preview is insufficient. Route to the relevant
+project when known. A simple question may need zero memory reads.
+
+#### Save outcomes, not an activity log
+
+Save confirmed, future-useful outcomes: significant decisions, preferences,
+non-obvious discoveries, operational state, and verified root causes or fixes.
+Group related changes into one observation per semantic owner, after the outcome
+is established. Reuse a stable `topic_key` or `mem_update` a known observation
+for an evolving subject. Do not save routine tests, listings, progress updates,
+failed experiments, speculative diagnoses, or facts cheaply recoverable from
+code. Do not force a save every turn.
+
+#### Safety, routing, checkpoints
+
+Never store credentials, cookies, tokens, account identifiers, raw captured
+traffic, or secret fragments. Choose the project by semantic owner, not cwd.
+Route personal Codex/Engram/cross-project preferences to `codex-config`, scope
+`personal`. Reuse only the authoritative registered session identity; never
+invent one.
+
+Memory operations are internal bookkeeping, never the user-facing answer.
+Complete required memory work before composing the completed-task reply;
+send the complete answer as the final message of the turn with no later tool calls.
+If memory work fails or needs follow-up, still send the answer.
+
+Summarize only at a genuine session close or compaction, not after a normal
+reply, and never twice for one boundary. On a `COMPACTION CHECKPOINT` marker,
+save one `mem_session_summary` of the compacted work, then continue.
+
+<!-- END GENERATED memorypolicy -->
+
+### Save format
 
 - **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
 - **type**: `bugfix` | `decision` | `architecture` | `discovery` | `pattern` | `config` | `preference`
 - **scope**: `project` (default) | `personal` | `global`
-- **topic_key** (optional, recommended for evolving decisions): stable key like `architecture/auth-model`
-- **content**:
+- **topic_key** (optional, recommended for evolving subjects): stable key like `architecture/auth-model`; reuse it instead of creating new observations, and call `mem_suggest_topic_key` only when unsure
+- **content**: `**What**`, `**Why**`, `**Where**`, `**Learned**` (omit Learned if none)
 
-  ```
-  **What**: One sentence — what was done
-  **Why**: What motivated it (user request, bug, performance, etc.)
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you (omit if none)
-  ```
-
-### Topic update rules (mandatory)
-
-- Different topics must not overwrite each other (e.g. architecture vs bugfix)
-- Reuse the same `topic_key` to update an evolving topic instead of creating new observations
-- If unsure about the key, call `mem_suggest_topic_key` first and then reuse it
-- Use `mem_update` when you have an exact observation ID to correct
-
-### DELIVERY GUARANTEE
-
-Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
-
-### WHEN TO SEARCH MEMORY
-
-When the user asks to recall something — any variation of "remember", "recall", "what did we do", "how did we solve", "recordar", "acordate", or references to past work:
-
-1. First call `mem_context` — checks recent session history (fast, cheap)
-2. If not found, call `mem_search` with relevant keywords (FTS5 full-text search)
-3. If you find a match, use `mem_get_observation` for full untruncated content
-
-Also search memory PROACTIVELY when:
-
-- Starting work on something that might have been done before
-- The user mentions a topic you have no context on — check if past sessions covered it
-
-### SESSION CLOSE PROTOCOL (mandatory)
-
-Before ending a session or saying "done" / "listo" / "that's it", you MUST call `mem_session_summary` with this structure:
-
-```
-## Goal
-[What we were working on this session]
-
-## Instructions
-[User preferences or constraints discovered — skip if none]
-
-## Discoveries
-- [Technical findings, gotchas, non-obvious learnings]
-
-## Accomplished
-- [Completed items with key details]
-
-## Next Steps
-- [What remains to be done — for the next session]
-
-## Relevant Files
-- path/to/file — [what it does or what changed]
-```
-
-This is NOT optional. If you skip this, the next session starts blind.
+A genuine session-close summary uses Goal, Instructions, Discoveries, Accomplished, Next Steps, and Relevant Files.
 
 ### PASSIVE CAPTURE
 
@@ -1528,16 +1559,6 @@ Example:
 ```
 
 This extraction feature remains available for deliberate imports of existing learning notes.
-
-### AFTER COMPACTION
-
-If you see a message about compaction or context reset:
-
-1. IMMEDIATELY call `mem_session_summary` with the compacted summary content
-2. Read the compact context injected by the hook; call `mem_context` only if more detail is needed
-3. Only THEN continue working
-
-Do not skip step 1. Without it, everything done before compaction is lost from memory.
 
 ---
 
