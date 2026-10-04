@@ -15,7 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Gentleman-Programming/engram/v2/internal/memorypolicy"
+	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 )
 
 func main() {

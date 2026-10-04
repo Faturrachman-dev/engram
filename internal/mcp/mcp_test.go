@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 	"github.com/Gentleman-Programming/engram/v3/internal/project"
 	"github.com/Gentleman-Programming/engram/v3/internal/store"
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
@@ -786,7 +787,8 @@ func TestSaveHandlersExposeStoreAdmissionErrors(t *testing.T) {
 	}
 }
 
-func TestHandleSaveAutoCapturesCurrentPromptByDefault(t *testing.T) {
+func TestHandleSaveDoesNotCapturePromptByDefault(t *testing.T) {
+	// PRD R8: an omitted capture_prompt must not persist the raw user prompt.
 	s := newMCPTestStore(t)
 	if err := s.EnrollProject("engram"); err != nil {
 		t.Fatalf("enroll project: %v", err)
@@ -815,15 +817,50 @@ func TestHandleSaveAutoCapturesCurrentPromptByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recent prompts: %v", err)
 	}
+	if len(prompts) != 0 {
+		t.Fatalf("expected no auto-captured prompt by default, got %d: %#v", len(prompts), prompts)
+	}
+}
+
+func TestHandleSaveCapturesPromptWhenExplicitlyOptedIn(t *testing.T) {
+	// PRD R8: explicit capture_prompt=true still opts in and dedupes.
+	s := newMCPTestStore(t)
+	if err := s.EnrollProject("engram"); err != nil {
+		t.Fatalf("enroll project: %v", err)
+	}
+	activity := NewSessionActivity(10 * time.Minute)
+	sessionID := defaultSessionID("engram")
+	activity.RecordPrompt(sessionID, "engram", "please persist the auth decision")
+	h := handleSave(s, MCPConfig{}, activity)
+
+	req := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"title":          "Auth decision",
+		"content":        "**What**: chose auth boundary\n**Why**: user asked",
+		"type":           "decision",
+		"project":        "engram",
+		"capture_prompt": true,
+	}}}
+
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected save error: %s", callResultText(t, res))
+	}
+
+	prompts, err := s.RecentPrompts("engram", 5)
+	if err != nil {
+		t.Fatalf("recent prompts: %v", err)
+	}
 	if len(prompts) != 1 {
-		t.Fatalf("expected one auto-captured prompt, got %d: %#v", len(prompts), prompts)
+		t.Fatalf("expected one captured prompt with explicit opt-in, got %d: %#v", len(prompts), prompts)
 	}
 	if prompts[0].SessionID != sessionID || prompts[0].Content != "please persist the auth decision" {
 		t.Fatalf("unexpected prompt row: %#v", prompts[0])
 	}
 
-	// Saving another observation in the same session should reuse the prompt row,
-	// not duplicate exact same project+session+content context.
+	// Second save with opt-in reuses the prompt row, not duplicating it.
 	res, err = h(context.Background(), req)
 	if err != nil || res.IsError {
 		t.Fatalf("second save failed: err=%v isError=%v text=%q", err, res.IsError, callResultText(t, res))
@@ -2987,7 +3024,7 @@ func TestResolveToolsEmptyTokenBetweenCommas(t *testing.T) {
 // REQ-001 | Design §4
 func TestHandleSave_CandidatesReturned(t *testing.T) {
 	s := newMCPTestStore(t)
-	h := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+	h := handleSave(s, MCPConfig{Mode: memorypolicy.ModeLegacy}, NewSessionActivity(10*time.Minute))
 
 	// Save first observation — no candidates yet.
 	req1 := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
@@ -3112,7 +3149,7 @@ func TestHandleSave_NoCandidates_ResultUnchanged(t *testing.T) {
 // REQ-001 edge case | Design §4
 func TestHandleSave_TopicKeyRevision_ReturnsCandidates(t *testing.T) {
 	s := newMCPTestStore(t)
-	h := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+	h := handleSave(s, MCPConfig{Mode: memorypolicy.ModeLegacy}, NewSessionActivity(10*time.Minute))
 
 	// Save a standalone observation (no topic_key) that will be a candidate.
 	req1 := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
@@ -3242,9 +3279,10 @@ func TestHandleSearch_SupersededAnnotation(t *testing.T) {
 	// Search for old auth.
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	searchReq := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"query":   "auth design",
-		"project": "engram",
-		"scope":   "project",
+		"query":           "auth design",
+		"project":         "engram",
+		"scope":           "project",
+		"response_format": "legacy",
 	}}}
 	searchRes, err := search(context.Background(), searchReq)
 	if err != nil {
@@ -3314,9 +3352,10 @@ func TestHandleSearch_PendingAsContested(t *testing.T) {
 
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	searchReq := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"query":   "decision",
-		"project": "engram",
-		"scope":   "project",
+		"query":           "decision",
+		"project":         "engram",
+		"scope":           "project",
+		"response_format": "legacy",
 	}}}
 	searchRes, err := search(context.Background(), searchReq)
 	if err != nil {
@@ -3350,9 +3389,10 @@ func TestHandleSearch_NoRelationsUnchanged(t *testing.T) {
 
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	searchReq := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"query":   "parser panic",
-		"project": "engram",
-		"scope":   "project",
+		"query":           "parser panic",
+		"project":         "engram",
+		"scope":           "project",
+		"response_format": "legacy",
 	}}}
 	searchRes, err := search(context.Background(), searchReq)
 	if err != nil {
@@ -3604,17 +3644,12 @@ func TestServerInstructionsConstantIsNonEmpty(t *testing.T) {
 }
 
 func TestBuildServerInstructions_NilOrAll(t *testing.T) {
-	instructions := buildServerInstructions(nil)
+	instructions := buildServerInstructions(nil, memorypolicy.ModeMinimal)
 	if instructions == "" {
 		t.Fatal("buildServerInstructions(nil) returned empty string")
 	}
 
-	// Intro header
-	if !strings.Contains(instructions, "Engram provides persistent memory that survives across sessions and compactions.") {
-		t.Errorf("missing intro header in nil allowlist instructions")
-	}
-
-	// CORE tools
+	// Core tools are advertised.
 	coreTools := []string{
 		"mem_save", "mem_search", "mem_context", "mem_session_summary",
 		"mem_get_observation", "mem_save_prompt", "mem_current_project", "mem_judge", "mem_compare",
@@ -3625,7 +3660,7 @@ func TestBuildServerInstructions_NilOrAll(t *testing.T) {
 		}
 	}
 
-	// DEFERRED tools (both agent and admin)
+	// Deferred tools (both agent and admin) are advertised.
 	deferredTools := []string{
 		"mem_update", "mem_review", "mem_pin", "mem_unpin", "mem_suggest_topic_key",
 		"mem_session_start", "mem_session_end", "mem_doctor", "mem_capture_passive",
@@ -3637,19 +3672,49 @@ func TestBuildServerInstructions_NilOrAll(t *testing.T) {
 		}
 	}
 
-	// Proactive save rule & conflict surfacing
-	if !strings.Contains(instructions, "PROACTIVE SAVE RULE:") {
-		t.Errorf("expected PROACTIVE SAVE RULE in nil allowlist instructions")
+	// Minimal mode must NOT reintroduce compulsory per-turn rituals.
+	for _, banned := range []string{"PROACTIVE SAVE RULE", "CONFLICT SURFACING", "immediately after ANY"} {
+		if strings.Contains(instructions, banned) {
+			t.Errorf("minimal instructions must not contain %q", banned)
+		}
 	}
-	if !strings.Contains(instructions, "## CONFLICT SURFACING") {
-		t.Errorf("expected CONFLICT SURFACING in nil allowlist instructions")
+	if !strings.Contains(instructions, "Mode minimal") {
+		t.Errorf("expected minimal mode statement")
+	}
+	if !strings.Contains(instructions, "conflict_review=\"manual\"") {
+		t.Errorf("expected manual conflict_review note in minimal mode")
+	}
+}
+
+func TestBuildServerInstructions_LegacyModeStatesScan(t *testing.T) {
+	instructions := buildServerInstructions(ProfileAgent, memorypolicy.ModeLegacy)
+	if !strings.Contains(instructions, "Mode legacy") {
+		t.Errorf("expected legacy mode statement")
+	}
+	if !strings.Contains(instructions, "judgment_id") {
+		t.Errorf("legacy instructions should reference the judgment_id flow")
+	}
+	if strings.Contains(instructions, "Mode minimal") {
+		t.Errorf("legacy instructions must not also claim minimal mode")
+	}
+}
+
+func TestBuildServerInstructions_WithinWordBudget(t *testing.T) {
+	// PRD R4: MCP server instructions must be at most 120 words.
+	const maxWords = 120
+	for name, mode := range map[string]memorypolicy.Mode{"minimal": memorypolicy.ModeMinimal, "legacy": memorypolicy.ModeLegacy} {
+		for profName, allowlist := range map[string]map[string]bool{"all": nil, "agent": ProfileAgent, "admin": ProfileAdmin} {
+			instructions := buildServerInstructions(allowlist, mode)
+			if n := len(strings.Fields(instructions)); n > maxWords {
+				t.Errorf("instructions (%s/%s) are %d words (>%d)", name, profName, n, maxWords)
+			}
+		}
 	}
 }
 
 func TestBuildServerInstructions_ProfileAgent(t *testing.T) {
-	instructions := buildServerInstructions(ProfileAgent)
+	instructions := buildServerInstructions(ProfileAgent, memorypolicy.ModeMinimal)
 
-	// CORE tools should all be present
 	coreTools := []string{
 		"mem_save", "mem_search", "mem_context", "mem_session_summary",
 		"mem_get_observation", "mem_save_prompt", "mem_current_project", "mem_judge", "mem_compare",
@@ -3660,7 +3725,6 @@ func TestBuildServerInstructions_ProfileAgent(t *testing.T) {
 		}
 	}
 
-	// Agent deferred tools present
 	agentDeferred := []string{
 		"mem_update", "mem_review", "mem_pin", "mem_unpin", "mem_suggest_topic_key",
 		"mem_session_start", "mem_session_end", "mem_doctor", "mem_capture_passive",
@@ -3671,15 +3735,7 @@ func TestBuildServerInstructions_ProfileAgent(t *testing.T) {
 		}
 	}
 
-	// Conflict surfacing and proactive save rule present
-	if !strings.Contains(instructions, "## CONFLICT SURFACING") {
-		t.Errorf("expected CONFLICT SURFACING in agent instructions")
-	}
-	if !strings.Contains(instructions, "PROACTIVE SAVE RULE:") {
-		t.Errorf("expected PROACTIVE SAVE RULE in agent instructions")
-	}
-
-	// Admin tools MUST NOT be advertised in agent instructions
+	// Admin tools MUST NOT be advertised in agent instructions.
 	adminTools := []string{"mem_stats", "mem_delete", "mem_timeline", "mem_merge_projects"}
 	for _, tool := range adminTools {
 		if strings.Contains(instructions, tool) {
@@ -3689,9 +3745,8 @@ func TestBuildServerInstructions_ProfileAgent(t *testing.T) {
 }
 
 func TestBuildServerInstructions_ProfileAdmin(t *testing.T) {
-	instructions := buildServerInstructions(ProfileAdmin)
+	instructions := buildServerInstructions(ProfileAdmin, memorypolicy.ModeMinimal)
 
-	// Admin tools should be present in deferred
 	adminTools := []string{"mem_stats", "mem_delete", "mem_timeline", "mem_merge_projects"}
 	for _, tool := range adminTools {
 		if !strings.Contains(instructions, tool) {
@@ -3699,18 +3754,15 @@ func TestBuildServerInstructions_ProfileAdmin(t *testing.T) {
 		}
 	}
 
-	// CORE TOOLS, PROACTIVE SAVE RULE, CONFLICT SURFACING should NOT be present
-	if strings.Contains(instructions, "CORE TOOLS (always available") {
-		t.Errorf("admin instructions should not include CORE TOOLS section")
+	if strings.Contains(instructions, "Core tools:") {
+		t.Errorf("admin instructions should not include a Core tools section")
 	}
-	if strings.Contains(instructions, "PROACTIVE SAVE RULE:") {
-		t.Errorf("admin instructions should not include PROACTIVE SAVE RULE")
-	}
-	if strings.Contains(instructions, "## CONFLICT SURFACING") {
-		t.Errorf("admin instructions should not include CONFLICT SURFACING section")
+	// Admin tools include memory writers (mem_delete, mem_merge_projects), so
+	// the delivery-safety sentence IS present.
+	if !strings.Contains(instructions, "must never block the user") {
+		t.Errorf("admin instructions should include the writer delivery note (admin has writers)")
 	}
 
-	// Agent-only deferred tools should NOT be present
 	agentOnly := []string{"mem_review", "mem_doctor", "mem_compare", "mem_capture_passive"}
 	for _, tool := range agentOnly {
 		if strings.Contains(instructions, tool) {
@@ -3719,129 +3771,20 @@ func TestBuildServerInstructions_ProfileAdmin(t *testing.T) {
 	}
 }
 
-func TestBuildServerInstructions_CustomAndConditional(t *testing.T) {
-	t.Run("only mem_save and mem_update", func(t *testing.T) {
-		allowlist := map[string]bool{
-			"mem_save":   true,
-			"mem_update": true,
-		}
-		instructions := buildServerInstructions(allowlist)
-
-		if !strings.Contains(instructions, "CORE TOOLS") {
-			t.Errorf("expected CORE TOOLS section when mem_save is present")
-		}
-		if !strings.Contains(instructions, "mem_save — ") {
-			t.Errorf("expected mem_save in CORE TOOLS")
-		}
-		if strings.Contains(instructions, "mem_search") {
-			t.Errorf("mem_search should not be present in custom instructions")
-		}
-
-		if !strings.Contains(instructions, "DEFERRED TOOLS") {
-			t.Errorf("expected DEFERRED TOOLS section when mem_update is present")
-		}
-		if !strings.Contains(instructions, "mem_update") {
-			t.Errorf("expected mem_update in DEFERRED TOOLS")
-		}
-		if strings.Contains(instructions, "mem_review") {
-			t.Errorf("mem_review should not be present in custom instructions")
-		}
-
-		if !strings.Contains(instructions, "PROACTIVE SAVE RULE:") {
-			t.Errorf("expected PROACTIVE SAVE RULE when mem_save is present")
-		}
-		if strings.Contains(instructions, "## CONFLICT SURFACING") {
-			t.Errorf("conflict surfacing should not be present when mem_judge is absent")
-		}
-	})
-
-	t.Run("only mem_judge", func(t *testing.T) {
-		allowlist := map[string]bool{
-			"mem_judge": true,
-		}
-		instructions := buildServerInstructions(allowlist)
-
-		if !strings.Contains(instructions, "CORE TOOLS") {
-			t.Errorf("CORE TOOLS should be present when mem_judge (core, eager) is registered")
-		}
-		if !strings.Contains(instructions, "mem_judge — ") {
-			t.Errorf("expected mem_judge in CORE TOOLS when registered")
-		}
-		if strings.Contains(instructions, "DEFERRED TOOLS") {
-			t.Errorf("DEFERRED TOOLS should be absent when no deferred tools are registered")
-		}
-		if strings.Contains(instructions, "PROACTIVE SAVE RULE:") {
-			t.Errorf("PROACTIVE SAVE RULE should be absent when mem_save is absent")
-		}
-		if strings.Contains(instructions, "## CONFLICT SURFACING") {
-			t.Errorf("CONFLICT SURFACING should be absent when mem_save is absent")
-		}
-		if strings.Contains(instructions, "mem_save") {
-			t.Errorf("mem_save should not be mentioned when it is not registered")
-		}
-	})
-
-	t.Run("mem_save and mem_judge", func(t *testing.T) {
-		allowlist := map[string]bool{
-			"mem_save":  true,
-			"mem_judge": true,
-		}
-		instructions := buildServerInstructions(allowlist)
-
-		if !strings.Contains(instructions, "## CONFLICT SURFACING") {
-			t.Errorf("CONFLICT SURFACING should be present when mem_save and mem_judge are registered")
-		}
-		if !strings.Contains(instructions, "After mem_save:") {
-			t.Errorf("conflict guidance should mention mem_save when it is registered")
-		}
-	})
-
-	t.Run("empty allowlist", func(t *testing.T) {
-		instructions := buildServerInstructions(map[string]bool{})
-		expected := "Engram provides persistent memory that survives across sessions and compactions."
-		if instructions != expected {
-			t.Errorf("empty allowlist should only produce header, got %q", instructions)
-		}
-	})
-}
-
-func TestBuildServerInstructions_DeliveryGuaranteeRequiresMemoryWriter(t *testing.T) {
-	requiredPhrases := []string{
-		"## DELIVERY GUARANTEE",
-		"Memory operations are internal bookkeeping, never the user-facing answer.",
-		"Complete required memory work before composing the completed-task reply;",
-		"send the complete answer as the final message of the turn with no later tool calls.",
-		"If memory work fails or needs follow-up, still send the answer.",
-	}
-	assertDeliveryGuarantee := func(t *testing.T, instructions, scenario string) {
-		t.Helper()
-		for _, phrase := range requiredPhrases {
-			if !strings.Contains(instructions, phrase) {
-				t.Errorf("expected %q in delivery guarantee for %s", phrase, scenario)
-			}
-		}
-	}
-
-	for _, tool := range []string{
-		"mem_save", "mem_update", "mem_review", "mem_delete",
-		"mem_save_prompt", "mem_pin", "mem_unpin", "mem_session_summary",
-		"mem_session_start", "mem_session_end", "mem_capture_passive",
-		"mem_merge_projects", "mem_judge", "mem_compare",
-	} {
+func TestBuildServerInstructions_DeliverySafetyRequiresMemoryWriter(t *testing.T) {
+	const phrase = "A memory problem must never block the user's answer: still send it."
+	for _, tool := range memoryWritingTools {
 		t.Run(tool, func(t *testing.T) {
-			instructions := buildServerInstructions(map[string]bool{tool: true})
-			assertDeliveryGuarantee(t, instructions, tool+" allowlist")
+			instructions := buildServerInstructions(map[string]bool{tool: true}, memorypolicy.ModeMinimal)
+			if !strings.Contains(instructions, phrase) {
+				t.Errorf("expected delivery-safety sentence for writer %q", tool)
+			}
 		})
 	}
-
-	t.Run("nil allowlist", func(t *testing.T) {
-		assertDeliveryGuarantee(t, buildServerInstructions(nil), "nil allowlist")
-	})
-
 	t.Run("non-writer", func(t *testing.T) {
-		instructions := buildServerInstructions(map[string]bool{"mem_search": true})
-		if strings.Contains(instructions, "## DELIVERY GUARANTEE") {
-			t.Error("DELIVERY GUARANTEE should be absent when no memory writer is registered")
+		instructions := buildServerInstructions(map[string]bool{"mem_search": true}, memorypolicy.ModeMinimal)
+		if strings.Contains(instructions, phrase) {
+			t.Error("delivery-safety sentence should be absent when no memory writer is registered")
 		}
 	})
 }
@@ -9025,8 +8968,9 @@ func TestHandleSearch_PreviewMarkerCountsRunes(t *testing.T) {
 			h := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 			res, err := h(context.Background(), mcppkg.CallToolRequest{
 				Params: mcppkg.CallToolParams{Arguments: map[string]any{
-					"query":   "runepreview",
-					"project": "rune-preview-project",
+					"query":           "runepreview",
+					"project":         "rune-preview-project",
+					"response_format": "legacy",
 				}},
 			})
 			if err != nil || res.IsError {
@@ -9105,9 +9049,10 @@ func TestHandleSearch_CompactResponseUsesBoundedPreviewAndRelations(t *testing.T
 	}
 	res, err := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))(context.Background(), mcppkg.CallToolRequest{
 		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"query":           "compact preview",
-			"project":         projectName,
-			"response_format": "compact",
+			"query":             "compact preview",
+			"project":           projectName,
+			"response_format":   "compact",
+			"include_relations": true,
 		}},
 	})
 	if err != nil || res.IsError {
@@ -9638,40 +9583,22 @@ func TestAllTools_ReadResponseEnvelope_WithAssertions(t *testing.T) {
 
 // ─── Phase E — Conflict Surfacing Instructions ────────────────────────────────
 
-// TestServerInstructions_ConflictSurfacingBlock verifies that serverInstructions
-// contains the CONFLICT SURFACING section with all required guidance phrases.
-// This is the RED→GREEN test for Phase E (E.1).
-func TestServerInstructions_ConflictSurfacingBlock(t *testing.T) {
-	required := []string{
-		// Section header — agents must be able to grep for it
-		"## CONFLICT SURFACING",
-
-		// Core trigger condition
+// Legacy-mode server instructions must carry the conflict-surfacing guidance,
+// since legacy mem_save auto-scans and surfaces judgment_required candidates.
+func TestServerInstructions_LegacyConflictSurfacingBlock(t *testing.T) {
+	instructions := buildServerInstructions(ProfileAgent, memorypolicy.ModeLegacy)
+	for _, phrase := range []string{
+		"judgment_id",
 		"judgment_required",
-
-		// The action: iterate candidates and call mem_judge
-		"candidates[]",
-		"mem_judge",
-
-		// Heuristic: low confidence threshold
-		"0.7",
-
-		// Heuristic: ask for high-stakes relation+type combos
-		"supersedes",
-		"conflicts_with",
-		"architecture",
-
-		// Conversational (not blocking) resolution pattern
-		"conversationally",
-
-		// Post-resolution: persist via mem_judge with evidence
-		"evidence",
-	}
-
-	for _, phrase := range required {
-		if !strings.Contains(serverInstructions, phrase) {
-			t.Errorf("serverInstructions is missing required phrase %q in CONFLICT SURFACING block", phrase)
+		"mem_search returns the legacy representation",
+	} {
+		if !strings.Contains(instructions, phrase) {
+			t.Errorf("legacy instructions missing required phrase %q", phrase)
 		}
+	}
+	// Minimal default must NOT carry the auto-scan judgment guidance.
+	if strings.Contains(serverInstructions, "judgment_required") {
+		t.Errorf("minimal default instructions must not carry judgment_required guidance")
 	}
 }
 
@@ -9694,6 +9621,7 @@ func TestHandleSave_MCPConfig_OverridesDefaults(t *testing.T) {
 
 	// Create MCP server with strict BM25Floor override — nothing should score >= 0.
 	cfg := MCPConfig{
+		Mode:      memorypolicy.ModeLegacy,
 		BM25Floor: ptrF(0.0),
 	}
 	h := handleSave(s, cfg, NewSessionActivity(10*time.Minute))
@@ -9803,9 +9731,10 @@ func TestMemSearch_AnnotatesConflictsWith_Judged(t *testing.T) {
 
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	searchRes, err := search(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"query":   "cache",
-		"project": "engram",
-		"scope":   "project",
+		"query":           "cache",
+		"project":         "engram",
+		"scope":           "project",
+		"response_format": "legacy",
 	}}})
 	if err != nil {
 		t.Fatalf("search error: %v", err)
@@ -9872,9 +9801,10 @@ func TestMemSearch_PendingConflict_KeepsPhase1Annotation(t *testing.T) {
 
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	searchRes, err := search(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"query":   "decision",
-		"project": "engram",
-		"scope":   "project",
+		"query":           "decision",
+		"project":         "engram",
+		"scope":           "project",
+		"response_format": "legacy",
 	}}})
 	if err != nil {
 		t.Fatalf("search error: %v", err)
@@ -9958,9 +9888,10 @@ func TestMemSearch_TitleEnrichment_SupersedesAndSupersededBy(t *testing.T) {
 
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	searchRes, err := search(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"query":   "JWT approach",
-		"project": "engram",
-		"scope":   "project",
+		"query":           "JWT approach",
+		"project":         "engram",
+		"scope":           "project",
+		"response_format": "legacy",
 	}}})
 	if err != nil {
 		t.Fatalf("search error: %v", err)
@@ -10048,9 +9979,10 @@ func TestMemSearch_TitleEnrichment_FallsBackToDeleted(t *testing.T) {
 
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	searchRes, err := search(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"query":   "superseding decision",
-		"project": "engram",
-		"scope":   "project",
+		"query":           "superseding decision",
+		"project":         "engram",
+		"scope":           "project",
+		"response_format": "legacy",
 	}}})
 	if err != nil {
 		t.Fatalf("search error: %v", err)
@@ -10195,9 +10127,10 @@ func TestMemSearch_AllThreeTypes_FormatExact(t *testing.T) {
 
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	searchRes, err := search(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"query":   "central architecture decision",
-		"project": "engram",
-		"scope":   "project",
+		"query":           "central architecture decision",
+		"project":         "engram",
+		"scope":           "project",
+		"response_format": "legacy",
 	}}})
 	if err != nil {
 		t.Fatalf("search error: %v", err)

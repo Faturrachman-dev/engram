@@ -29,6 +29,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Gentleman-Programming/engram/v3/internal/diagnostic"
+	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 	projectpkg "github.com/Gentleman-Programming/engram/v3/internal/project"
 	"github.com/Gentleman-Programming/engram/v3/internal/store"
 	"github.com/Gentleman-Programming/engram/v3/internal/timeutil"
@@ -39,6 +40,12 @@ import (
 const (
 	sourceProcessOverride        = projectpkg.SourceProcessOverride
 	sessionIDPropertyDescription = "Optional authoritative session ID already registered by the runtime or mem_session_start; never invent one. Omit by default; ambiguity fails closed."
+
+	// Compact search byte-budget bounds (PRD R7). The default caps the
+	// serialized result-envelope payload; callers may request 1 KiB–64 KiB.
+	defaultCompactSearchMaxBytes = 8 * 1024
+	minCompactSearchMaxBytes     = 1 * 1024
+	maxCompactSearchMaxBytes     = 64 * 1024
 )
 
 // MCPConfig holds configuration for the MCP server.
@@ -53,21 +60,37 @@ type MCPConfig struct {
 	// auto-resolution; per-call project arguments remain separately validated.
 	DefaultProject string
 
-	// BM25Floor overrides the default BM25 score floor used by FindCandidates
-	// during conflict candidate detection (REQ-001). The floor is the minimum
-	// acceptable BM25 rank (negative; closer to 0 = better match). Candidates
-	// whose score falls below this threshold are excluded.
+	// BM25Floor is a deprecated legacy override forwarded to FindCandidates in
+	// legacy mode (REQ-001). It is the minimum acceptable raw FTS5 BM25 rank
+	// (negative; closer to 0 = better match); candidates below it are excluded.
 	//
-	// nil means "use the store default" (-2.0). An explicit pointer value
-	// (including 0.0) is forwarded directly. Using a pointer avoids the
-	// zero-value ambiguity where 0.0 would otherwise be indistinguishable
-	// from "not set".
+	// nil means "do not set BM25Floor": the store then applies its BM25MaxRank
+	// path with a default maximum rank of 0.0 (admitting ordinary negative FTS
+	// ranks), NOT a -2.0 floor. An explicit pointer value (including 0.0) is
+	// forwarded directly; the pointer disambiguates 0.0 from "not set". BM25
+	// ranks are relevance scores, not semantic-confidence probabilities.
 	BM25Floor *float64
 
 	// Limit overrides the maximum number of conflict candidates returned per
 	// mem_save call (REQ-001). nil means "use the store default" (3).
 	// An explicit pointer value (including 0) is forwarded directly.
 	Limit *int
+
+	// Mode selects the memory behavior contract (PRD §6). The zero value is
+	// treated as minimal by effectiveMode so existing callers that construct
+	// MCPConfig{} get the new default. In minimal mode ordinary mem_save does
+	// not scan for conflict candidates and mem_search defaults to compact;
+	// legacy preserves the historical scan and representation.
+	Mode memorypolicy.Mode
+}
+
+// effectiveMode returns the configured mode, defaulting an unset mode to
+// minimal (PRD precedence default).
+func (c MCPConfig) effectiveMode() memorypolicy.Mode {
+	if c.Mode == memorypolicy.ModeLegacy {
+		return memorypolicy.ModeLegacy
+	}
+	return memorypolicy.ModeMinimal
 }
 
 var suggestTopicKey = store.SuggestTopicKey
@@ -305,14 +328,14 @@ type coreToolDesc struct {
 }
 
 var coreTools = []coreToolDesc{
-	{"mem_save", "mem_save — save decisions, bugs, discoveries, conventions PROACTIVELY (do not wait to be asked)"},
+	{"mem_save", "mem_save — save a confirmed, future-useful outcome (decision, preference, discovery, fix)"},
 	{"mem_search", "mem_search — find past work, decisions, or context from previous sessions"},
-	{"mem_context", "mem_context — get recent session history (call at session start or after compaction)"},
-	{"mem_session_summary", "mem_session_summary — save end-of-session summary (MANDATORY before saying \"done\")"},
+	{"mem_context", "mem_context — get recent session history (after compaction or when continuity is needed)"},
+	{"mem_session_summary", "mem_session_summary — save a summary at a genuine session close or compaction"},
 	{"mem_get_observation", "mem_get_observation — get full untruncated content of a search result by ID"},
-	{"mem_save_prompt", "mem_save_prompt — save user prompt for context"},
-	{"mem_current_project", "mem_current_project — detect current project from cwd (recommended first call)"},
-	{"mem_judge", "mem_judge — record a verdict on a pending memory conflict (judgment_required flow)"},
+	{"mem_save_prompt", "mem_save_prompt — explicitly save a user prompt for context"},
+	{"mem_current_project", "mem_current_project — detect current project from cwd"},
+	{"mem_judge", "mem_judge — record a verdict on a conflict pair from an explicit review"},
 	{"mem_compare", "mem_compare — persist a semantic verdict you have already judged externally"},
 }
 
@@ -340,25 +363,23 @@ func hasRegisteredMemoryWriter(allowlist map[string]bool) bool {
 	return false
 }
 
-// buildServerInstructions dynamically generates the instructions for MCP clients
-// based on which tools are allowed/registered.
-func buildServerInstructions(allowlist map[string]bool) string {
+// buildServerInstructions generates the client-visible MCP server instructions.
+// It is intentionally brief (PRD R4: ≤120 words): it names the tool purpose and
+// active mode, not the full memory protocol, which lives in the canonical
+// policy (internal/memorypolicy) delivered as model instructions/skills.
+func buildServerInstructions(allowlist map[string]bool, mode memorypolicy.Mode) string {
 	var b strings.Builder
-	b.WriteString("Engram provides persistent memory that survives across sessions and compactions.\n\n")
+	b.WriteString("Engram is persistent memory across sessions and compactions.\n\n")
 
 	var activeCore []string
 	for _, ct := range coreTools {
 		if shouldRegister(ct.name, allowlist) {
-			activeCore = append(activeCore, ct.desc)
+			activeCore = append(activeCore, ct.name)
 		}
 	}
 	if len(activeCore) > 0 {
-		b.WriteString("CORE TOOLS (always available — use without ToolSearch):\n")
-		for _, desc := range activeCore {
-			b.WriteString("  ")
-			b.WriteString(desc)
-			b.WriteString("\n")
-		}
+		b.WriteString("Core tools: ")
+		b.WriteString(strings.Join(activeCore, ", "))
 		b.WriteString("\n")
 	}
 
@@ -369,34 +390,56 @@ func buildServerInstructions(allowlist map[string]bool) string {
 		}
 	}
 	if len(activeDeferred) > 0 {
-		b.WriteString("DEFERRED TOOLS (use ToolSearch when needed):\n  ")
+		b.WriteString("Deferred tools (ToolSearch when needed): ")
 		b.WriteString(strings.Join(activeDeferred, ", "))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	// Mode notes name only registered tools so the instructions never
+	// advertise a tool this allowlist does not expose (PRD R4, T4).
+	hasSave := shouldRegister("mem_save", allowlist)
+	hasSearch := shouldRegister("mem_search", allowlist)
+	hasJudge := shouldRegister("mem_judge", allowlist)
+	if hasSave || hasSearch {
+		if mode == memorypolicy.ModeLegacy {
+			b.WriteString("Mode legacy:")
+			if hasSave {
+				b.WriteString(" mem_save scans lexical conflict candidates")
+				if hasJudge {
+					b.WriteString("; if judgment_required, judge each with mem_judge and its own judgment_id")
+				}
+				b.WriteString(".")
+			}
+			if hasSearch {
+				b.WriteString(" mem_search returns the legacy representation by default.")
+			}
+		} else {
+			b.WriteString("Mode minimal: work first, save meaningful outcomes; do not search/save/judge before every action.")
+			if hasSave {
+				b.WriteString(" mem_save does not auto-scan conflicts (conflict_review=\"manual\"); review explicitly via `engram conflicts`")
+				if hasJudge {
+					b.WriteString(" or mem_judge")
+				}
+				b.WriteString(".")
+			}
+			if hasSearch {
+				b.WriteString(" mem_search is compact by default.")
+			}
+		}
 		b.WriteString("\n\n")
 	}
 
-	if shouldRegister("mem_save", allowlist) {
-		b.WriteString("PROACTIVE SAVE RULE: Call mem_save immediately after ANY decision, bug fix, discovery, or convention — not just when asked.\n\n")
-	}
 	if hasRegisteredMemoryWriter(allowlist) {
-		b.WriteString("## DELIVERY GUARANTEE\n\n" +
-			"Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.\n\n")
-	}
-
-	if shouldRegister("mem_save", allowlist) && shouldRegister("mem_judge", allowlist) {
-		b.WriteString("## CONFLICT SURFACING\n\n" +
-			"After mem_save: if judgment_required, iterate candidates[] and call mem_judge\n" +
-			"once per entry using that entry's judgment_id; never reuse the top-level judgment_id.\n" +
-			"Ask conversationally when confidence < 0.7 OR (relation in\n" +
-			"{supersedes, conflicts_with} AND type in {architecture, policy, decision}); else\n" +
-			"resolve with related | compatible | scoped | not_conflict. Pass evidence from user reply.")
+		b.WriteString("A memory problem must never block the user's answer: still send it.")
 	}
 
 	return strings.TrimSpace(b.String())
 }
 
-// serverInstructions tells MCP clients when to use Engram's tools.
-// Retained as package-level variable for backward compatibility.
-var serverInstructions = buildServerInstructions(nil)
+// serverInstructions is the default (minimal, all-tools) rendering retained as
+// a package-level value for callers and tests.
+var serverInstructions = buildServerInstructions(nil, memorypolicy.DefaultMode)
 
 // NewServerWithTools creates an MCP server registering only the tools in
 // the allowlist. If allowlist is nil, all tools are registered.
@@ -419,7 +462,7 @@ func newServerWithActivity(s *store.Store, cfg MCPConfig, allowlist map[string]b
 		"engram",
 		version,
 		server.WithToolCapabilities(true),
-		server.WithInstructions(buildServerInstructions(allowlist)),
+		server.WithInstructions(buildServerInstructions(allowlist, cfg.effectiveMode())),
 	)
 
 	registerTools(srv, s, cfg, allowlist, activity)
@@ -469,7 +512,13 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 					mcp.Description("Token matching: \"all\" (default — every token must match, FTS5 AND) or \"any\" (any token matches — broader recall for multi-token queries). Any other value returns an error."),
 				),
 				mcp.WithString("response_format",
-					mcp.Description("Response format: omit for the legacy response, or use \"compact\" for bounded previews and structured results."),
+					mcp.Description("\"compact\" (bounded previews, no relation histories) or \"legacy\" (full historical representation). Omit to use the server mode default: compact in minimal mode, legacy in legacy mode."),
+				),
+				mcp.WithBoolean("include_relations",
+					mcp.Description("Include relation histories (as_source/as_target). Overrides the format default. Compact format omits them unless this is true; relations still obey max_bytes."),
+				),
+				mcp.WithNumber("max_bytes",
+					mcp.Description("Byte budget for the serialized result payload. Compact default 8192; legacy only when set. Accepted 1024–65536. Over budget: relations, then previews, then trailing entries are trimmed, with omitted counts."),
 				),
 				mcp.WithNumber("limit",
 					mcp.Description("Max results (default: 10, max: 20)"),
@@ -488,32 +537,9 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(false),
 				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithDescription(`Save an important observation to persistent memory. Call this PROACTIVELY after completing significant work — don't wait to be asked.
+				mcp.WithDescription(`Save a confirmed, future-useful outcome: a decision, preference, non-obvious discovery, operational state, or verified root cause/fix. Group related changes into one observation per semantic owner; not an activity log.
 
-WHEN to save (call this after each of these):
-- Architectural decisions or tradeoffs
-- Bug fixes (what was wrong, why, how you fixed it)
-- New patterns or conventions established
-- Configuration changes or environment setup
-- Important discoveries or gotchas
-- File structure changes
-
-FORMAT for content — use this structured format:
-  **What**: [concise description of what was done]
-  **Why**: [the reasoning, user request, or problem that drove it]
-  **Where**: [files/paths affected, e.g. src/auth/middleware.ts, internal/store/store.go]
-  **Learned**: [any gotchas, edge cases, or decisions made — omit if none]
-
-TITLE should be short and searchable, like: "JWT auth middleware", "FTS5 query sanitization", "Fixed N+1 in user list"
-
-Examples:
-  title: "Switched from sessions to JWT"
-  type: "decision"
-  content: "**What**: Replaced express-session with jsonwebtoken for auth\n**Why**: Session storage doesn't scale across multiple instances\n**Where**: src/middleware/auth.ts, src/routes/login.ts\n**Learned**: Must set httpOnly and secure flags on the cookie, refresh tokens need separate rotation logic"
-
-  title: "Fixed FTS5 syntax error on special chars"
-  type: "bugfix"
-  content: "**What**: Wrapped each search term in quotes before passing to FTS5 MATCH\n**Why**: Users typing queries like 'fix auth bug' would crash because FTS5 interprets special chars as operators\n**Where**: internal/store/store.go — sanitizeFTS() function\n**Learned**: FTS5 MATCH syntax is NOT the same as LIKE — always sanitize user input"`),
+Content format: **What**, **Why**, **Where**, **Learned** (omit if none). Title: short and searchable, e.g. "Switched from sessions to JWT". Reuse topic_key to update an evolving subject. Never store credentials or secrets. Returns identity and routing fields; conflict review follows the server mode.`),
 				mcp.WithString("title",
 					mcp.Required(),
 					mcp.Description("Short, searchable title (e.g. 'JWT auth middleware', 'Fixed N+1 query')"),
@@ -549,7 +575,7 @@ Examples:
 					mcp.Description("Short-lived token returned by an ambiguous_project error. Required with project_choice_reason=user_selected_after_ambiguous_project."),
 				),
 				mcp.WithBoolean("capture_prompt",
-					mcp.Description("Automatically capture the current user prompt when available. Omission defaults to true; false skips capture for automated saves. If present, must be a boolean; other values return capture_prompt must be a boolean before project resolution or writes."),
+					mcp.Description("Explicit opt-in (default: false): also record the current user prompt when available. Omitted means no raw prompt is stored."),
 				),
 			),
 			queuedWriteHandler(writeQueue, handleSave(s, cfg, activity)),
@@ -849,39 +875,9 @@ Examples:
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(false),
 				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithDescription(`Save a comprehensive end-of-session summary. Call this when a session is ending or when significant work is complete. This creates a structured summary that future sessions will use to understand what happened.
+				mcp.WithDescription(`Save a structured session summary at a genuine session close or compaction checkpoint, not after a normal reply, and never twice for one boundary.
 
-FORMAT — use this exact structure in the content field:
-
-## Goal
-[One sentence: what were we building/working on in this session]
-
-## Instructions
-[User preferences, constraints, or context discovered during this session. Things a future agent needs to know about HOW the user wants things done. Skip if nothing notable.]
-
-## Discoveries
-- [Technical finding, gotcha, or learning 1]
-- [Technical finding 2]
-- [Important API behavior, config quirk, etc.]
-
-## Accomplished
-- ✅ [Completed task 1 — with key implementation details]
-- ✅ [Completed task 2 — mention files changed]
-- 🔲 [Identified but not yet done — for next session]
-
-## Next Steps
-- [What remains to be done — for the next session]
-
-## Relevant Files
-- path/to/file.ts — [what it does or what changed]
-- path/to/other.go — [role in the architecture]
-
-GUIDELINES:
-- Be CONCISE but don't lose important details (file paths, error messages, decisions)
-- Focus on WHAT and WHY, not HOW (the code itself is in the repo)
-- Include things that would save a future agent time
-- The Discoveries section is the most valuable — capture gotchas and non-obvious learnings
-- Relevant Files should only include files that were significantly changed or are important for context`),
+Content sections: ## Goal, ## Instructions (user preferences/constraints; skip if none), ## Discoveries, ## Accomplished, ## Next Steps, ## Relevant Files (path — role or change). Be concise; keep file paths, error messages, and decisions. Discoveries are the most valuable part.`),
 				mcp.WithString("content",
 					mcp.Required(),
 					mcp.Description("Full session summary using the Goal/Instructions/Discoveries/Accomplished/Next Steps/Relevant Files format"),
@@ -1061,26 +1057,11 @@ Duplicates are automatically detected and skipped — safe to call multiple time
 	if shouldRegister("mem_judge", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_judge",
-				mcp.WithDescription(`Record a verdict on a pending memory conflict surfaced by mem_save.
+				mcp.WithDescription(`Record a verdict on one pending conflict relation, identified by judgment_id (from mem_save candidates in legacy mode, or from an explicit conflicts scan/list).
 
-WHEN TO CALL: After mem_save returns judgment_required=true, iterate candidates[] and call mem_judge once per entry using that entry's judgment_id.
-
-PARAMS:
-  judgment_id (required) — from candidates[].judgment_id in the mem_save response
-  relation    (required) — one of: related, compatible, scoped, conflicts_with, supersedes, not_conflict
-  reason      (optional) — free-text explanation of the verdict
-  evidence    (optional) — JSON or text supporting the verdict
-  confidence  (optional) — float 0..1; default 1.0
-
-WHEN TO ASK USER:
-  - confidence < 0.7: surface to user before judging
-  - relation in {supersedes, conflicts_with} AND type in {architecture, policy, decision}: ask user
-  - otherwise: resolve silently
-
-SUCCESS: Returns the updated relation row with judgment_status="judged".
-ERROR: Returns IsError=true if judgment_id is unknown or relation verb is invalid. Row is NOT mutated on error.
-
-Re-judging an already-judged ID overwrites the verdict (deliberate revision).`),
+relation: related | compatible | scoped | conflicts_with | supersedes | not_conflict. Optional: reason, evidence, confidence (0..1, default 1.0).
+Ask the user first when confidence < 0.7, or for supersedes/conflicts_with on architecture, policy, or decision memories.
+Returns the judged row. Unknown IDs or invalid verbs return an error without mutating; re-judging overwrites the verdict.`),
 				mcp.WithTitleAnnotation("Judge Memory Conflict"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -1115,26 +1096,10 @@ Re-judging an already-judged ID overwrites the verdict (deliberate revision).`),
 	if shouldRegister("mem_compare", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_compare",
-				mcp.WithDescription(`Persist a semantic verdict you have already judged externally (with your LLM) into Engram.
+				mcp.WithDescription(`Persist a semantic verdict you already reached about two memories (you judge; Engram records).
 
-WHEN TO CALL: After you have evaluated two memories and reached a verdict, call mem_compare to PERSIST that verdict into the relation store. You do the judgment; mem_compare records it.
-
-PARAMS:
-  memory_id_a  (required) — integer id of the first observation (from mem_search or mem_get_observation)
-  memory_id_b  (required) — integer id of the second observation
-  relation     (required) — one of: related, compatible, scoped, conflicts_with, supersedes, not_conflict
-  confidence   (required) — float 0..1; your self-reported confidence in the verdict
-  reasoning    (required) — explanation of the verdict, max 200 chars
-  model        (optional) — your model identifier, stored for provenance (e.g. "claude-haiku-4-5")
-
-BEHAVIOR:
-  - Persists the verdict via JudgeBySemantic with system provenance (marked_by_actor="engram").
-  - not_conflict: persists a judged relation and returns its sync_id, so future scans do not re-evaluate the pair.
-  - Idempotent: calling again for the same pair updates the existing row.
-  - Cross-project pairs are rejected.
-
-SUCCESS: Returns { "sync_id": "rel-..." } on every persisted verdict.
-ERROR: Returns IsError=true if IDs are unknown, relation is invalid, or cross-project pair.`),
+Requires memory_id_a, memory_id_b (observation ids), relation (related | compatible | scoped | conflicts_with | supersedes | not_conflict), confidence (0..1), and reasoning (max 200 chars); optional model for provenance.
+Idempotent per pair; not_conflict is stored so future scans skip the pair. Cross-project pairs, unknown IDs, and invalid relations return errors. Returns the relation sync_id.`),
 				mcp.WithTitleAnnotation("Compare Memory Pair (Persist Semantic Verdict)"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -1251,10 +1216,30 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 		if matchMode != "" && matchMode != "all" && matchMode != "any" {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid match_mode %q: must be \"all\" or \"any\"", matchMode)), nil
 		}
-		if responseFormat != "" && responseFormat != "compact" {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid response_format %q: must be \"compact\"", responseFormat)), nil
+		// Resolve response format with mode-aware defaults (PRD R7):
+		//   minimal mode, omitted → compact; legacy mode, omitted → legacy.
+		if responseFormat != "" && responseFormat != "compact" && responseFormat != "legacy" {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid response_format %q: must be \"compact\" or \"legacy\"", responseFormat)), nil
 		}
 		compact := responseFormat == "compact"
+		if responseFormat == "" {
+			compact = cfg.effectiveMode() == memorypolicy.ModeMinimal
+		}
+		// Relation histories: compact omits them by default, legacy includes
+		// them by default; an explicit include_relations overrides the format.
+		includeRelations := !compact
+		if v, ok := req.GetArguments()["include_relations"].(bool); ok {
+			includeRelations = v
+		}
+		// Byte budget: always for compact; for legacy only when explicitly
+		// requested (PRD R7).
+		maxBytes := intArg(req, "max_bytes", defaultCompactSearchMaxBytes)
+		_, maxBytesExplicit := req.GetArguments()["max_bytes"]
+		if maxBytesExplicit {
+			if maxBytes < minCompactSearchMaxBytes || maxBytes > maxCompactSearchMaxBytes {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid max_bytes %d: must be between %d and %d", maxBytes, minCompactSearchMaxBytes, maxCompactSearchMaxBytes)), nil
+			}
+		}
 
 		// all_projects=true short-circuits project resolution: we search globally
 		// regardless of the project override or any auto-detected project. This
@@ -1303,141 +1288,299 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 			return respondWithProject(detRes, fmt.Sprintf("No memories found for: %q", query), nil), nil
 		}
 
-		// Batch-load relations for all results (REQ-002). Avoids N+1.
-		syncIDs := make([]string, 0, len(results))
-		for _, r := range results {
-			if r.SyncID != "" {
-				syncIDs = append(syncIDs, r.SyncID)
-			}
-		}
+		// Batch-load relations only when they will actually be rendered
+		// (PRD R7): compact without include_relations must not pay for a
+		// relationship fetch and then hide it. Legacy format and explicit
+		// include_relations still load them. Avoids N+1.
 		relationsMap := map[string]store.ObservationRelations{}
-		if len(syncIDs) > 0 {
-			if rm, relErr := s.GetRelationsForObservationsContext(ctx, syncIDs); relErr == nil {
-				relationsMap = rm
-			} else if errors.Is(relErr, context.Canceled) || errors.Is(relErr, context.DeadlineExceeded) {
-				return mcp.NewToolResultError(fmt.Sprintf("Search error: %s. Try simpler keywords.", relErr)), nil
+		if includeRelations {
+			syncIDs := make([]string, 0, len(results))
+			for _, r := range results {
+				if r.SyncID != "" {
+					syncIDs = append(syncIDs, r.SyncID)
+				}
 			}
-			// Errors from relation loading are swallowed — search must not fail.
+			if len(syncIDs) > 0 {
+				if rm, relErr := searchRelationsLoader(ctx, s, syncIDs); relErr == nil {
+					relationsMap = rm
+				} else if errors.Is(relErr, context.Canceled) || errors.Is(relErr, context.DeadlineExceeded) {
+					return mcp.NewToolResultError(fmt.Sprintf("Search error: %s. Try simpler keywords.", relErr)), nil
+				}
+				// Errors from relation loading are swallowed — search must not fail.
+			}
 		}
 
-		var b strings.Builder
-		if !compact {
-			fmt.Fprintf(&b, "Found %d memories:\n\n", len(results))
+		nudge := activity.NudgeIfNeededForProject(sessionID, project)
+		render := func(b searchBudget) (string, map[string]any) {
+			return renderSearchResults(results, relationsMap, compact, b, nudge)
 		}
-		anyTruncated := false
-		structuredResults := make([]map[string]any, 0, len(results))
-		for i, r := range results {
-			projectDisplay := ""
-			if r.Project != nil {
-				projectDisplay = fmt.Sprintf(" | project: %s", *r.Project)
-			}
-			preview := r.Preview
-			if r.Truncated {
-				anyTruncated = true
-				preview += " [preview]"
-			}
-			stateDisplay := ""
-			if r.State() == store.ObservationStateNeedsReview {
-				stateDisplay = " | state: needs_review"
-			}
-			if !compact {
-				fmt.Fprintf(&b, "[%d] #%d (%s) — %s\n    %s\n    %s%s | scope: %s%s\n",
-					i+1, r.ID, r.Type, r.Title,
-					preview,
-					timeutil.FormatLocal(r.CreatedAt), projectDisplay, r.Scope, stateDisplay)
-			}
-			entry := map[string]any{
+
+		// Budget: compact always (default 8 KiB); legacy only when the caller
+		// explicitly asked for max_bytes, so unbudgeted legacy output is
+		// unchanged (PRD R7).
+		if !compact && !maxBytesExplicit {
+			text, extra := render(fullSearchBudget(len(results)))
+			// JW4: use respondWithProject for the success path (REQ-314).
+			return respondWithProject(detRes, text, extra), nil
+		}
+		text, extra := fitSearchBudget(detRes, len(results), maxBytes, includeRelations, render)
+		return respondWithProject(detRes, text, extra), nil
+	}
+}
+
+// searchRelationsLoader is the relation-history store query used by mem_search.
+// It is a seam so tests can prove the omitted-relations path never queries.
+var searchRelationsLoader = func(ctx context.Context, s *store.Store, syncIDs []string) (map[string]store.ObservationRelations, error) {
+	return s.GetRelationsForObservationsContext(ctx, syncIDs)
+}
+
+const searchMoreHint = "Narrow the query, lower limit, or call mem_get_observation(id) for specific entries."
+
+// searchBudget describes how much of each search result is rendered.
+type searchBudget struct {
+	relationCap int  // relations kept per direction per entry; -1 keeps all
+	previewCap  int  // preview runes kept; -1 keeps the full preview
+	keep        int  // leading entries rendered
+	reduceLast  bool // render the last kept entry as identity fields only
+	maxBytes    int  // reported in the envelope when anything was omitted
+}
+
+func fullSearchBudget(n int) searchBudget {
+	return searchBudget{relationCap: -1, previewCap: -1, keep: n}
+}
+
+// fitSearchBudget picks the richest rendering whose serialized envelope fits
+// maxBytes (PRD R7). Order: trim relation histories, shorten previews
+// (rune-safe), drop trailing entries, reduce the last entry to identity
+// fields, then return no entries. Every step only removes whole values, so the
+// payload is always valid JSON and omission metadata stays truthful.
+func fitSearchBudget(res projectpkg.DetectionResult, n, maxBytes int, includeRelations bool, render func(searchBudget) (string, map[string]any)) (string, map[string]any) {
+	fits := func(b searchBudget) (string, map[string]any, bool) {
+		b.maxBytes = maxBytes
+		text, extra := render(b)
+		return text, extra, len(projectEnvelopeJSON(res, text, extra)) <= maxBytes
+	}
+	relationCaps := []int{-1}
+	if includeRelations {
+		relationCaps = []int{-1, 64, 32, 16, 8, 4, 2, 1, 0}
+	}
+	for _, rc := range relationCaps {
+		if text, extra, ok := fits(searchBudget{relationCap: rc, previewCap: -1, keep: n}); ok {
+			return text, extra
+		}
+	}
+	relationFloor := relationCaps[len(relationCaps)-1]
+	for _, pc := range []int{160, 80, 40, 0} {
+		if text, extra, ok := fits(searchBudget{relationCap: relationFloor, previewCap: pc, keep: n}); ok {
+			return text, extra
+		}
+	}
+	for keep := n - 1; keep >= 1; keep-- {
+		if text, extra, ok := fits(searchBudget{relationCap: relationFloor, previewCap: 0, keep: keep}); ok {
+			return text, extra
+		}
+	}
+	if n > 0 {
+		if text, extra, ok := fits(searchBudget{relationCap: 0, previewCap: 0, keep: 1, reduceLast: true}); ok {
+			return text, extra
+		}
+	}
+	text, extra, _ := fits(searchBudget{relationCap: 0, previewCap: 0, keep: 0})
+	return text, extra
+}
+
+// renderSearchResults builds the result text and structured envelope fields for
+// one budget. Legacy text keeps its historical format byte-for-byte when the
+// budget is full.
+func renderSearchResults(results []store.SearchPreviewResult, relationsMap map[string]store.ObservationRelations, compact bool, budget searchBudget, nudge string) (string, map[string]any) {
+	var b strings.Builder
+	keep := min(budget.keep, len(results))
+	omittedResults := len(results) - keep
+	omittedRelations := 0
+	shortenedPreviews := 0
+	anyTruncated := false
+	structuredResults := make([]map[string]any, 0, keep)
+	for i, r := range results[:keep] {
+		if budget.reduceLast && i == keep-1 {
+			// Identity only: the observation is still addressable through
+			// mem_get_observation(id); everything else is reported omitted.
+			structuredResults = append(structuredResults, map[string]any{
 				"id":      r.ID,
 				"sync_id": r.SyncID,
-				"title":   r.Title,
-				"type":    r.Type,
 				"state":   r.State(),
-				"scope":   r.Scope,
-				"pinned":  r.Pinned,
-			}
-			if r.Project != nil {
-				entry["project"] = *r.Project
-			}
-			if r.TopicKey != nil && *r.TopicKey != "" {
-				entry["topic_key"] = *r.TopicKey
-			}
-			if r.ReviewAfter != nil {
-				entry["review_after"] = *r.ReviewAfter
-			}
-			if compact {
-				entry["preview"] = r.Preview
-				entry["truncated"] = r.Truncated
-			}
-			structuredResults = append(structuredResults, entry)
-
-			// Append relation annotations. Skip orphaned (filtered by store).
-			//
-			// Annotation format contract (REQ-012, Design §7):
-			//   supersedes: #<id> (<title>)            judged supersedes
-			//   superseded_by: #<id> (<title>)         judged superseded_by
-			//   conflicts: #<id> (<title>)             judged conflicts_with
-			//   conflict: contested by #<id> (pending) pending (UNCHANGED from Phase 1)
-			//
-			// <id> is the observation's integer primary key. <title> is the related
-			// observation's title; "(deleted)" when the observation is missing or soft-deleted.
-			// Prefixes (supersedes:, superseded_by:, conflicts:) are stable across Phase 3.
+				"reduced": true,
+			})
 			if rels, ok := relationsMap[r.SyncID]; ok {
-				if compact {
-					entry["relations"] = map[string]any{"as_source": rels.AsSource, "as_target": rels.AsTarget}
-				}
-				if !compact {
-					for _, rel := range rels.AsSource {
-						switch {
-						case rel.Relation == store.RelationSupersedes && rel.JudgmentStatus == store.JudgmentStatusJudged:
-							title := rel.TargetTitle
-							if rel.TargetMissing || title == "" {
-								title = "deleted"
-							}
-							fmt.Fprintf(&b, "    supersedes: #%d (%s)\n", rel.TargetIntID, title)
-						case rel.Relation == store.RelationConflictsWith && rel.JudgmentStatus == store.JudgmentStatusJudged:
-							title := rel.TargetTitle
-							if rel.TargetMissing || title == "" {
-								title = "deleted"
-							}
-							fmt.Fprintf(&b, "    conflicts: #%d (%s)\n", rel.TargetIntID, title)
-						case rel.JudgmentStatus == store.JudgmentStatusPending:
-							// UNCHANGED from Phase 1 — byte-for-byte preserved.
-							fmt.Fprintf(&b, "    conflict: contested by #%s (pending)\n", rel.TargetID)
-						}
-					}
-					for _, rel := range rels.AsTarget {
-						switch {
-						case rel.Relation == store.RelationSupersedes && rel.JudgmentStatus == store.JudgmentStatusJudged:
-							title := rel.SourceTitle
-							if rel.SourceMissing || title == "" {
-								title = "deleted"
-							}
-							fmt.Fprintf(&b, "    superseded_by: #%d (%s)\n", rel.SourceIntID, title)
-						case rel.JudgmentStatus == store.JudgmentStatusPending:
-							// UNCHANGED from Phase 1 — byte-for-byte preserved.
-							fmt.Fprintf(&b, "    conflict: contested by #%s (pending)\n", rel.SourceID)
-						}
-					}
-				}
+				omittedRelations += len(rels.AsSource) + len(rels.AsTarget)
 			}
 			if !compact {
-				b.WriteString("\n")
+				fmt.Fprintf(&b, "[%d] #%d (reduced to fit the byte budget)\n\n", i+1, r.ID)
+			}
+			continue
+		}
+
+		projectDisplay := ""
+		if r.Project != nil {
+			projectDisplay = fmt.Sprintf(" | project: %s", *r.Project)
+		}
+		preview := r.Preview
+		shortened := false
+		if budget.previewCap >= 0 && utf8.RuneCountInString(preview) > budget.previewCap {
+			preview = string([]rune(preview)[:budget.previewCap])
+			shortened = true
+			shortenedPreviews++
+		}
+		truncated := r.Truncated || shortened
+		textPreview := preview
+		if truncated {
+			anyTruncated = true
+			textPreview += " [preview]"
+		}
+		stateDisplay := ""
+		if r.State() == store.ObservationStateNeedsReview {
+			stateDisplay = " | state: needs_review"
+		}
+		if !compact {
+			fmt.Fprintf(&b, "[%d] #%d (%s) — %s\n    %s\n    %s%s | scope: %s%s\n",
+				i+1, r.ID, r.Type, r.Title,
+				textPreview,
+				timeutil.FormatLocal(r.CreatedAt), projectDisplay, r.Scope, stateDisplay)
+		}
+		entry := map[string]any{
+			"id":      r.ID,
+			"sync_id": r.SyncID,
+			"title":   r.Title,
+			"type":    r.Type,
+			"state":   r.State(),
+			"scope":   r.Scope,
+			"pinned":  r.Pinned,
+		}
+		if r.Project != nil {
+			entry["project"] = *r.Project
+		}
+		if r.TopicKey != nil && *r.TopicKey != "" {
+			entry["topic_key"] = *r.TopicKey
+		}
+		if r.ReviewAfter != nil {
+			entry["review_after"] = *r.ReviewAfter
+		}
+		if compact {
+			entry["created_at"] = r.CreatedAt
+			entry["preview"] = preview
+			entry["truncated"] = truncated
+		}
+
+		// Append relation annotations. Skip orphaned (filtered by store).
+		//
+		// Annotation format contract (REQ-012, Design §7):
+		//   supersedes: #<id> (<title>)            judged supersedes
+		//   superseded_by: #<id> (<title>)         judged superseded_by
+		//   conflicts: #<id> (<title>)             judged conflicts_with
+		//   conflict: contested by #<id> (pending) pending (UNCHANGED from Phase 1)
+		//
+		// <id> is the observation's integer primary key. <title> is the related
+		// observation's title; "(deleted)" when the observation is missing or soft-deleted.
+		// Prefixes (supersedes:, superseded_by:, conflicts:) are stable across Phase 3.
+		if rels, ok := relationsMap[r.SyncID]; ok {
+			asSource, droppedSource := capRelations(rels.AsSource, budget.relationCap)
+			asTarget, droppedTarget := capRelations(rels.AsTarget, budget.relationCap)
+			dropped := droppedSource + droppedTarget
+			omittedRelations += dropped
+			if compact {
+				entry["relations"] = map[string]any{"as_source": asSource, "as_target": asTarget}
+				if dropped > 0 {
+					entry["omitted_relations"] = dropped
+				}
+			} else {
+				writeRelationAnnotations(&b, asSource, asTarget)
+				if dropped > 0 {
+					entry["omitted_relations"] = dropped
+					fmt.Fprintf(&b, "    (+%d relations omitted to fit the byte budget)\n", dropped)
+				}
 			}
 		}
-		if !compact && anyTruncated {
-			fmt.Fprintf(&b, "---\nResults above are previews (300 chars). To read the full content of a specific memory, call mem_get_observation(id: <ID>).\n")
+		structuredResults = append(structuredResults, entry)
+		if !compact {
+			b.WriteString("\n")
 		}
+	}
+	if !compact && anyTruncated {
+		fmt.Fprintf(&b, "---\nResults above are previews (300 chars). To read the full content of a specific memory, call mem_get_observation(id: <ID>).\n")
+	}
 
-		resultText := b.String()
-		if compact {
-			resultText = fmt.Sprintf("Found %d memories.", len(results))
-		}
-		if nudge := activity.NudgeIfNeededForProject(sessionID, project); nudge != "" {
-			resultText += nudge
-		}
+	trimmed := omittedResults > 0 || omittedRelations > 0 || shortenedPreviews > 0 || budget.reduceLast
+	text := b.String()
+	switch {
+	case compact && trimmed:
+		text = fmt.Sprintf("Found %d memories; %d shown within the %d-byte budget.", len(results), keep, budget.maxBytes)
+	case compact:
+		text = fmt.Sprintf("Found %d memories.", len(results))
+	case trimmed:
+		text = fmt.Sprintf("Found %d memories (%d shown within the %d-byte budget):\n\n", len(results), keep, budget.maxBytes) + text
+	default:
+		text = fmt.Sprintf("Found %d memories:\n\n", len(results)) + text
+	}
+	// The activity nudge is appended last so budget messages never replace it.
+	text += nudge
 
-		// JW4: use respondWithProject for the success path (REQ-314).
-		return respondWithProject(detRes, resultText, map[string]any{"results": structuredResults}), nil
+	extra := map[string]any{"results": structuredResults}
+	if trimmed {
+		extra["max_bytes"] = budget.maxBytes
+		extra["more"] = searchMoreHint
+		if omittedResults > 0 {
+			extra["omitted_results"] = omittedResults
+		}
+		if omittedRelations > 0 {
+			extra["omitted_relations"] = omittedRelations
+		}
+		if shortenedPreviews > 0 {
+			extra["shortened_previews"] = shortenedPreviews
+		}
+	}
+	return text, extra
+}
+
+// capRelations keeps the first limit relations (limit < 0 keeps all) and
+// reports how many were dropped.
+func capRelations(rels []store.Relation, limit int) ([]store.Relation, int) {
+	if limit < 0 || len(rels) <= limit {
+		return rels, 0
+	}
+	return rels[:limit], len(rels) - limit
+}
+
+func writeRelationAnnotations(b *strings.Builder, asSource, asTarget []store.Relation) {
+	for _, rel := range asSource {
+		switch {
+		case rel.Relation == store.RelationSupersedes && rel.JudgmentStatus == store.JudgmentStatusJudged:
+			title := rel.TargetTitle
+			if rel.TargetMissing || title == "" {
+				title = "deleted"
+			}
+			fmt.Fprintf(b, "    supersedes: #%d (%s)\n", rel.TargetIntID, title)
+		case rel.Relation == store.RelationConflictsWith && rel.JudgmentStatus == store.JudgmentStatusJudged:
+			title := rel.TargetTitle
+			if rel.TargetMissing || title == "" {
+				title = "deleted"
+			}
+			fmt.Fprintf(b, "    conflicts: #%d (%s)\n", rel.TargetIntID, title)
+		case rel.JudgmentStatus == store.JudgmentStatusPending:
+			// UNCHANGED from Phase 1 — byte-for-byte preserved.
+			fmt.Fprintf(b, "    conflict: contested by #%s (pending)\n", rel.TargetID)
+		}
+	}
+	for _, rel := range asTarget {
+		switch {
+		case rel.Relation == store.RelationSupersedes && rel.JudgmentStatus == store.JudgmentStatusJudged:
+			title := rel.SourceTitle
+			if rel.SourceMissing || title == "" {
+				title = "deleted"
+			}
+			fmt.Fprintf(b, "    superseded_by: #%d (%s)\n", rel.SourceIntID, title)
+		case rel.JudgmentStatus == store.JudgmentStatusPending:
+			// UNCHANGED from Phase 1 — byte-for-byte preserved.
+			fmt.Fprintf(b, "    conflict: contested by #%s (pending)\n", rel.SourceID)
+		}
 	}
 }
 
@@ -1518,6 +1661,11 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 				return mcp.NewToolResultError("capture_prompt must be a boolean"), nil
 			}
 			capturePrompt = &option
+		} else {
+			// Implicit prompt capture is off (PRD R8): an omitted capture_prompt
+			// must not persist the raw user message.
+			off := false
+			capturePrompt = &off
 		}
 		recoverySessionID := sessionID
 		if strings.TrimSpace(recoverySessionID) == "" {
@@ -1633,27 +1781,9 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 			msg += "\n" + similarWarning
 		}
 
-		// Post-transaction conflict candidate detection (REQ-001).
+		// Conflict candidate detection depends on the memory mode (PRD R5).
 		// Errors are logged and swallowed — detection failure never fails the save.
 		extra := map[string]any{"truncation": truncation}
-		// Build CandidateOptions, forwarding any MCPConfig overrides.
-		// nil fields mean "use store defaults"; explicit pointer values override.
-		candOpts := store.CandidateOptions{
-			Project:   project,
-			Scope:     scope,
-			BM25Floor: cfg.BM25Floor, // nil → store default (-2.0); explicit value overrides
-		}
-		if cfg.Limit != nil {
-			candOpts.Limit = *cfg.Limit
-		}
-		if timing != nil {
-			candOpts.Timings = &timing.candidates
-		}
-		candidates, candErr := s.FindCandidates(savedID, candOpts)
-		if candErr != nil {
-			// Log only — do not fail the save.
-			fmt.Fprintf(os.Stderr, "engram: FindCandidates error (non-fatal): %v\n", candErr)
-		}
 
 		// Fetch the saved observation's sync_id for the envelope (REQ-001).
 		var savedSyncID string
@@ -1665,6 +1795,40 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 			if savedObservation.ReviewAfter != nil {
 				extra["review_after"] = *savedObservation.ReviewAfter
 			}
+		}
+
+		if cfg.effectiveMode() == memorypolicy.ModeMinimal {
+			// Minimal mode: an ordinary save never scans for candidates, never
+			// creates pending relation rows, and never obliges a mem_judge
+			// follow-up. conflict_review="manual" tells clients that the absence
+			// of candidates means "not scanned", not "no conflict exists".
+			// Explicit review stays available via `engram conflicts` and
+			// mem_judge/mem_compare.
+			extra["judgment_required"] = false
+			extra["conflict_review"] = "manual"
+			detRes.Project = project
+			return respondWithProject(detRes, msg, extra), nil
+		}
+
+		// Legacy mode: historical automatic candidate scan after save.
+		// Build CandidateOptions, forwarding any MCPConfig overrides.
+		// nil fields mean "use store defaults"; explicit pointer values override.
+		extra["conflict_review"] = "auto"
+		candOpts := store.CandidateOptions{
+			Project:   project,
+			Scope:     scope,
+			BM25Floor: cfg.BM25Floor, // nil → store default; explicit value overrides
+		}
+		if cfg.Limit != nil {
+			candOpts.Limit = *cfg.Limit
+		}
+		if timing != nil {
+			candOpts.Timings = &timing.candidates
+		}
+		candidates, candErr := s.FindCandidates(savedID, candOpts)
+		if candErr != nil {
+			// Log only — do not fail the save.
+			fmt.Fprintf(os.Stderr, "engram: FindCandidates error (non-fatal): %v\n", candErr)
 		}
 		if len(candidates) > 0 {
 			extra["judgment_required"] = true
@@ -1687,7 +1851,7 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 			}
 			extra["candidates"] = candList
 
-			msg += fmt.Sprintf("\nCONFLICT REVIEW PENDING — %d candidate(s); use mem_judge to record verdicts.", len(candidates))
+			msg += fmt.Sprintf("\nCONFLICT REVIEW PENDING — %d candidate(s); these are possible lexical matches, not confirmed contradictions; use mem_judge to record verdicts.", len(candidates))
 		} else {
 			extra["judgment_required"] = false
 		}
@@ -3448,6 +3612,12 @@ func firstProjectValue(explicit, defaultProject string) string {
 // fields (project, project_source, project_path) to the text output.
 // extra is an optional map of additional fields to include.
 func respondWithProject(res projectpkg.DetectionResult, text string, extra map[string]any) *mcp.CallToolResult {
+	return mcp.NewToolResultText(string(projectEnvelopeJSON(res, text, extra)))
+}
+
+// projectEnvelopeJSON serializes the respondWithProject envelope; budgeted
+// responses measure exactly these bytes.
+func projectEnvelopeJSON(res projectpkg.DetectionResult, text string, extra map[string]any) []byte {
 	envelope := map[string]any{
 		"project":        res.Project,
 		"project_source": res.Source,
@@ -3461,7 +3631,7 @@ func respondWithProject(res projectpkg.DetectionResult, text string, extra map[s
 		envelope[k] = v
 	}
 	out, _ := jsonMarshal(envelope)
-	return mcp.NewToolResultText(string(out))
+	return out
 }
 
 // writeProjectErrorResult formats and returns a structured error result when project

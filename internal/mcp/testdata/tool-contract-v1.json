@@ -129,8 +129,10 @@
       "type": ["object"],
       "properties": {
         "all_projects": {"type":["boolean"],"additionalProperties":true},
+        "include_relations": {"type":["boolean"],"additionalProperties":true},
         "limit": {"type":["number"],"additionalProperties":true},
         "match_mode": {"type":["string"],"additionalProperties":true},
+        "max_bytes": {"type":["number"],"additionalProperties":true},
         "project": {"type":["string"],"additionalProperties":true},
         "query": {"type":["string"],"additionalProperties":true},
         "response_format": {"type":["string"],"additionalProperties":true},

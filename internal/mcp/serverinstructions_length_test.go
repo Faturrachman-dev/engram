@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 )
 
 // TestServerInstructionsStaysUnderClientTruncationLimit enforces the
@@ -41,37 +43,53 @@ func TestServerInstructionsStaysUnderClientTruncationLimit(t *testing.T) {
 
 	for name, allowlist := range profiles {
 		t.Run(name, func(t *testing.T) {
-			instructions := buildServerInstructions(allowlist)
-			runes := utf8.RuneCountInString(instructions)
-			t.Logf("profile %q instructions rune count: %d (byte count: %d)", name, runes, len(instructions))
-			if runes >= clientTruncationCeiling {
-				t.Errorf("profile %q instructions is %d runes (>=%d) — exceeds the documented 2048-rune MCP client truncation ceiling. Trim prose.",
-					name, runes, clientTruncationCeiling)
+			for _, mode := range []memorypolicy.Mode{memorypolicy.ModeMinimal, memorypolicy.ModeLegacy} {
+				instructions := buildServerInstructions(allowlist, mode)
+				runes := utf8.RuneCountInString(instructions)
+				t.Logf("profile %q mode %q instructions rune count: %d (byte count: %d)", name, mode, runes, len(instructions))
+				if runes >= clientTruncationCeiling {
+					t.Errorf("profile %q mode %q instructions is %d runes (>=%d) — exceeds the documented 2048-rune MCP client truncation ceiling. Trim prose.",
+						name, mode, runes, clientTruncationCeiling)
+				}
 			}
 		})
 	}
 }
 
-func TestServerInstructionsUsesCandidateJudgmentIDs(t *testing.T) {
-	const candidateInstruction = "once per entry using that entry's judgment_id"
-	const topLevelWarning = "never reuse the top-level judgment_id"
-
-	candidateIndex := strings.Index(serverInstructions, candidateInstruction)
-	warningIndex := strings.Index(serverInstructions, topLevelWarning)
-	if candidateIndex < 0 || warningIndex < candidateIndex {
-		t.Errorf("serverInstructions must require each candidate's judgment_id and prohibit reusing the top-level judgment_id")
+func TestServerInstructionsHasNoCompulsoryRituals(t *testing.T) {
+	// PRD R4: no maintained minimal-mode instruction may force memory calls on
+	// every turn. Guard against regressions reintroducing the old wording.
+	for _, allowlist := range []map[string]bool{nil, ProfileAgent, ProfileAdmin} {
+		instructions := buildServerInstructions(allowlist, memorypolicy.ModeMinimal)
+		for _, banned := range []string{
+			"PROACTIVE SAVE RULE",
+			"immediately after ANY",
+			"CONFLICT SURFACING",
+			"MANDATORY",
+			"before saying",
+		} {
+			if strings.Contains(instructions, banned) {
+				t.Errorf("minimal instructions must not contain compulsory directive %q", banned)
+			}
+		}
 	}
 }
 
-func TestServerInstructionsDeliveryGuarantee(t *testing.T) {
-	for _, requirement := range []string{
-		"Memory operations are internal bookkeeping, never the user-facing answer.",
-		"Complete required memory work before composing the completed-task reply;",
-		"send the complete answer as the final message of the turn with no later tool calls.",
-		"If memory work fails or needs follow-up, still send the answer.",
-	} {
-		if !strings.Contains(serverInstructions, requirement) {
-			t.Errorf("server instructions missing delivery guarantee: %q", requirement)
-		}
+func TestServerInstructionsMinimalStatesManualReview(t *testing.T) {
+	instructions := buildServerInstructions(ProfileAgent, memorypolicy.ModeMinimal)
+	if !strings.Contains(instructions, "conflict_review=\"manual\"") {
+		t.Errorf("minimal server instructions must explain conflict_review is manual")
+	}
+}
+
+func TestServerInstructionsLegacyUsesCandidateJudgmentIDs(t *testing.T) {
+	// The candidate-judgment flow only applies in legacy mode, where mem_save
+	// auto-scans. The minimal default must not carry this directive.
+	legacy := buildServerInstructions(ProfileAgent, memorypolicy.ModeLegacy)
+	if !strings.Contains(legacy, "judgment_id") {
+		t.Errorf("legacy instructions must reference the judgment_id flow")
+	}
+	if strings.Contains(serverInstructions, "judgment_id") {
+		t.Errorf("minimal default instructions must not carry the candidate judgment_id flow")
 	}
 }
