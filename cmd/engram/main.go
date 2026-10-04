@@ -36,6 +36,7 @@ import (
 	"github.com/Gentleman-Programming/engram/v3/internal/cloudconfig"
 	"github.com/Gentleman-Programming/engram/v3/internal/diagnostic"
 	"github.com/Gentleman-Programming/engram/v3/internal/mcp"
+	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 	"github.com/Gentleman-Programming/engram/v3/internal/obsidian"
 	"github.com/Gentleman-Programming/engram/v3/internal/project"
 	"github.com/Gentleman-Programming/engram/v3/internal/server"
@@ -1102,6 +1103,7 @@ func cmdMCP(cfg store.Config) {
 	}
 
 	toolsFilter := ""
+	memoryModeFlag := ""
 	// The --project flag below is the explicit process argument of the shared
 	// override rule; project.ProcessOverride supplies the ENGRAM_PROJECT step.
 	projectOverride, _ := project.ProcessOverride("")
@@ -1116,6 +1118,20 @@ func cmdMCP(cfg store.Config) {
 			if projectOverride == "" {
 				fatal(fmt.Errorf("--project requires a value"))
 			}
+		} else if strings.HasPrefix(os.Args[i], "--memory-mode=") {
+			memoryModeFlag = strings.TrimSpace(strings.TrimPrefix(os.Args[i], "--memory-mode="))
+			if memoryModeFlag == "" {
+				fatal(fmt.Errorf("--memory-mode requires a value"))
+			}
+		} else if os.Args[i] == "--memory-mode" {
+			if i+1 >= len(os.Args) {
+				fatal(fmt.Errorf("--memory-mode requires a value"))
+			}
+			memoryModeFlag = strings.TrimSpace(os.Args[i+1])
+			if memoryModeFlag == "" {
+				fatal(fmt.Errorf("--memory-mode requires a value"))
+			}
+			i++
 		} else if os.Args[i] == "--project" {
 			if i+1 >= len(os.Args) {
 				fatal(fmt.Errorf("--project requires a value"))
@@ -1126,6 +1142,13 @@ func cmdMCP(cfg store.Config) {
 			}
 			i++
 		}
+	}
+
+	// Resolve memory mode (PRD §6): explicit CLI > env > minimal default.
+	// Invalid or empty-but-present values fail clearly.
+	memoryMode, err := memorypolicy.ResolveMode(memoryModeFlag, os.Getenv("ENGRAM_MEMORY_MODE"))
+	if err != nil {
+		fatal(err)
 	}
 
 	s, err := storeNew(cfg)
@@ -1153,7 +1176,7 @@ func cmdMCP(cfg store.Config) {
 	}
 	defer stopAutosync()
 
-	mcpCfg := mcp.MCPConfig{DefaultProject: projectOverride, Version: version}
+	mcpCfg := mcp.MCPConfig{DefaultProject: projectOverride, Version: version, Mode: memoryMode}
 	allowlist := resolveMCPTools(toolsFilter)
 	mcpSrv := newMCPServerWithConfig(s, mcpCfg, allowlist)
 
@@ -3746,11 +3769,15 @@ Usage:
 
 Commands:
   serve [port]       Start HTTP API server (default: 7437)
-  mcp [--tools=PROFILE] [--project NAME]
+  mcp [--tools=PROFILE] [--project NAME] [--memory-mode=minimal|legacy]
                      Start MCP server (stdio transport, for any AI agent)
                         Profiles: agent (%d tools), admin (%d tools), all (default, %d)
                        Combine: --tools=agent,admin or pick individual tools
-                       Example: engram mcp --tools=agent
+                       Example: engram mcp --tools=agent --memory-mode=minimal
+                       --memory-mode  minimal (default) disables auto conflict scan after
+                                      ordinary saves and defaults search to compact; legacy
+                                      preserves historical scan/representation. Also accepted
+                                      as ENGRAM_MEMORY_MODE. Precedence: flag > env > minimal.
                        --project NAME  Set process-level default project (overrides cwd detection).
                                        Also accepted as ENGRAM_PROJECT=NAME env var.
                        ENGRAM_MEM_SAVE_TIMING=1  Log mem_save stage timings to stderr (off by default).

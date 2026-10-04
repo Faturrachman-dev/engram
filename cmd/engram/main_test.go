@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Gentleman-Programming/engram/v3/internal/mcp"
+	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 	"github.com/Gentleman-Programming/engram/v3/internal/obsidian"
 	"github.com/Gentleman-Programming/engram/v3/internal/project"
 	"github.com/Gentleman-Programming/engram/v3/internal/setup"
@@ -2959,6 +2960,73 @@ func TestCmdMCPDetectsProjectFromGit(t *testing.T) {
 	if capturedCfg.DefaultProject != "" {
 		t.Fatalf("DefaultProject = %q; want empty without flag/env", capturedCfg.DefaultProject)
 	}
+}
+
+// captureMCPMode runs cmdMCP with the given args/env and returns the memory
+// mode forwarded into MCPConfig.
+func captureMCPMode(t *testing.T, cfg store.Config, args []string, env map[string]string) memorypolicy.Mode {
+	t.Helper()
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	var capturedCfg mcp.MCPConfig
+	oldNew := newMCPServerWithConfig
+	t.Cleanup(func() { newMCPServerWithConfig = oldNew })
+	newMCPServerWithConfig = func(s *store.Store, mcpCfg mcp.MCPConfig, allowlist map[string]bool) *mcpserver.MCPServer {
+		capturedCfg = mcpCfg
+		return oldNew(s, mcpCfg, allowlist)
+	}
+	withArgs(t, args...)
+	_, _ = captureOutput(t, func() { cmdMCP(cfg) })
+	return capturedCfg.Mode
+}
+
+func TestCmdMCPMemoryModeDefaultsToMinimal(t *testing.T) {
+	if got := captureMCPMode(t, testConfig(t), []string{"engram", "mcp"}, nil); got != memorypolicy.ModeMinimal {
+		t.Fatalf("default mode = %q, want minimal", got)
+	}
+}
+
+func TestCmdMCPMemoryModeFromFlagEquals(t *testing.T) {
+	if got := captureMCPMode(t, testConfig(t), []string{"engram", "mcp", "--memory-mode=legacy"}, nil); got != memorypolicy.ModeLegacy {
+		t.Fatalf("mode = %q, want legacy", got)
+	}
+}
+
+func TestCmdMCPMemoryModeFromFlagSpaceSeparated(t *testing.T) {
+	if got := captureMCPMode(t, testConfig(t), []string{"engram", "mcp", "--memory-mode", "legacy"}, nil); got != memorypolicy.ModeLegacy {
+		t.Fatalf("mode = %q, want legacy", got)
+	}
+}
+
+func TestCmdMCPMemoryModeFromEnv(t *testing.T) {
+	if got := captureMCPMode(t, testConfig(t), []string{"engram", "mcp"}, map[string]string{"ENGRAM_MEMORY_MODE": "legacy"}); got != memorypolicy.ModeLegacy {
+		t.Fatalf("mode = %q, want legacy from env", got)
+	}
+}
+
+func TestCmdMCPMemoryModeFlagOverridesEnv(t *testing.T) {
+	got := captureMCPMode(t, testConfig(t), []string{"engram", "mcp", "--memory-mode=minimal"}, map[string]string{"ENGRAM_MEMORY_MODE": "legacy"})
+	if got != memorypolicy.ModeMinimal {
+		t.Fatalf("mode = %q, want minimal (flag overrides env)", got)
+	}
+}
+
+func TestCmdMCPMemoryModeInvalidFails(t *testing.T) {
+	oldExit := exitFunc
+	t.Cleanup(func() { exitFunc = oldExit })
+	exited := 0
+	exitFunc = func(code int) { exited = code; panic("engram-fatal-sentinel") }
+	defer func() {
+		if r := recover(); r != "engram-fatal-sentinel" {
+			t.Fatalf("expected fatal panic for invalid mode, got %v", r)
+		}
+		if exited != 1 {
+			t.Fatalf("exit code = %d, want 1", exited)
+		}
+	}()
+	withArgs(t, "engram", "mcp", "--memory-mode=bogus")
+	_, _ = captureOutput(t, func() { cmdMCP(testConfig(t)) })
 }
 
 func TestCmdMCPServesBeforeDeferredEnrolledProjectRepair(t *testing.T) {
