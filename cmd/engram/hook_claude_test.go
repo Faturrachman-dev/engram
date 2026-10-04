@@ -21,6 +21,57 @@ import (
 	"github.com/Gentleman-Programming/engram/v3/internal/store"
 )
 
+// Existing binding tests describe a registered runtime session; never let them
+// consult the developer's real store.
+func init() { hookSessionMissing = func(string) bool { return false } }
+
+func stubHookSessionMissing(t *testing.T, missing bool) {
+	t.Helper()
+	old := hookSessionMissing
+	hookSessionMissing = func(string) bool { return missing }
+	t.Cleanup(func() { hookSessionMissing = old })
+}
+
+func TestCodexPreToolUseDropsUnregisteredSessionID(t *testing.T) {
+	stubHookSessionMissing(t, true)
+	input := []byte(`{"session_id":"host","tool_name":"mcp__engram__mem_save","tool_input":{"session_id":"model-picked","title":"t"}}`)
+	var response struct {
+		HookSpecificOutput struct {
+			PermissionDecision string         `json:"permissionDecision"`
+			UpdatedInput       map[string]any `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(transformCodexPreToolUse(input), &response); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := response.HookSpecificOutput
+	if got.PermissionDecision != "allow" {
+		t.Fatalf("decision = %q, want allow", got.PermissionDecision)
+	}
+	if _, ok := got.UpdatedInput["session_id"]; ok {
+		t.Fatalf("updatedInput kept session_id for unregistered session: %v", got.UpdatedInput)
+	}
+	if got.UpdatedInput["title"] != "t" {
+		t.Fatalf("updatedInput lost fields: %v", got.UpdatedInput)
+	}
+}
+
+func TestCodexPreToolUseStillBindsSessionStartWhenUnregistered(t *testing.T) {
+	stubHookSessionMissing(t, true)
+	input := []byte(`{"session_id":"host","tool_name":"mcp__engram__mem_session_start","tool_input":{"id":"model-picked"}}`)
+	var response struct {
+		HookSpecificOutput struct {
+			UpdatedInput map[string]any `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(transformCodexPreToolUse(input), &response); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := response.HookSpecificOutput.UpdatedInput["id"]; got != "host" {
+		t.Fatalf("mem_session_start id = %v, want host", got)
+	}
+}
+
 func claudeHookStdin(t *testing.T, input string, closed bool) *os.File {
 	t.Helper()
 	reader, writer, err := os.Pipe()

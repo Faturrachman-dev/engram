@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,8 +10,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Gentleman-Programming/engram/v3/internal/store"
 )
 
 // claudeEngramWriteAndSessionTools is the complete set of Engram MCP tools
@@ -195,11 +199,20 @@ func transformClaudePreToolUse(input []byte) []byte {
 		return []byte("{}")
 	}
 
-	boundSessionID, err := json.Marshal(sessionID)
-	if err != nil {
-		return claudePreToolUseDeny("cannot bind authoritative Claude session_id")
+	field := claudeAuthoritativeSessionField(toolName)
+	if field == "session_id" && hookSessionMissing(sessionID) {
+		// SessionStart could not register this runtime ID (server down, port
+		// taken, ambiguous project). Binding it would turn every write into
+		// unknown_session with no way out, so drop the reference instead and
+		// let the server resolve the write as a session-less save.
+		delete(toolInput, field)
+	} else {
+		boundSessionID, err := json.Marshal(sessionID)
+		if err != nil {
+			return claudePreToolUseDeny("cannot bind authoritative Claude session_id")
+		}
+		toolInput[field] = boundSessionID
 	}
-	toolInput[claudeAuthoritativeSessionField(toolName)] = boundSessionID
 	updatedInput, err := json.Marshal(toolInput)
 	if err != nil {
 		return claudePreToolUseDeny("cannot encode bound Claude tool input")
@@ -270,6 +283,32 @@ func transformCodexPreToolUse(input []byte) []byte {
 		return claudePreToolUseDeny("cannot encode Codex hook response")
 	}
 	return encoded
+}
+
+// hookSessionMissing reports whether the store positively lacks sessionID.
+// Any failure to consult the store answers false so binding stays the default.
+var hookSessionMissing = func(sessionID string) bool {
+	cfg, err := storeDefaultConfig()
+	if err != nil {
+		home := resolveHomeFallback()
+		if home == "" {
+			return false
+		}
+		cfg = store.FallbackConfig(filepath.Join(home, ".engram"))
+	}
+	if dir := os.Getenv("ENGRAM_DATA_DIR"); strings.TrimSpace(dir) != "" {
+		cfg.DataDir = dir
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); err != nil {
+		return false
+	}
+	s, err := storeNew(cfg)
+	if err != nil {
+		return false
+	}
+	defer s.Close()
+	_, err = s.GetSession(sessionID)
+	return errors.Is(err, sql.ErrNoRows)
 }
 
 func claudeHookRequiredString(payload map[string]json.RawMessage, field string) (string, bool) {

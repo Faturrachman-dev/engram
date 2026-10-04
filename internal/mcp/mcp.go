@@ -3642,7 +3642,7 @@ func errorWithMeta(code, msg string, availableProjects []string) *mcp.CallToolRe
 	}
 	switch code {
 	case "ambiguous_project":
-		envelope["hint"] = "Ask the user to choose one of available_projects, then retry the same write tool (mem_save, mem_save_prompt, or mem_session_summary) with project and project_choice_reason=user_selected_after_ambiguous_project; alternatively cd into the target repo or add repo .engram/config.json."
+		envelope["hint"] = "If the cwd is a workspace folder holding several repos (not itself one), run `engram init` in the cwd yourself (creates .engram/config.json, project = folder name; pass a name to override), then retry the same call without project or session_id. If the work belongs to a single child repo, ask the user to choose one of available_projects and retry with project and project_choice_reason=user_selected_after_ambiguous_project."
 	case "database_generation_changed":
 		envelope["hint"] = "Restart Engram and retry."
 	case "invalid_project_choice":

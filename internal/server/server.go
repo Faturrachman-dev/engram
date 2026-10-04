@@ -102,7 +102,12 @@ type Server struct {
 
 func New(s *store.Store, port int) *Server {
 	srv := &Server{store: s, port: port, listen: net.Listen, version: "dev", generationInvalidated: make(chan struct{}, 1)}
-	srv.httpServer = &http.Server{Handler: corsMiddleware(srv.Handler())}
+	handler := http.Handler(corsMiddleware(srv.Handler()))
+	if verbose := strings.TrimSpace(os.Getenv("ENGRAM_VERBOSE")); verbose == "1" || strings.EqualFold(verbose, "true") || strings.EqualFold(verbose, "yes") {
+		handler = verboseMiddleware(handler)
+		log.Printf("[engram] verbose request logging enabled")
+	}
+	srv.httpServer = &http.Server{Handler: handler}
 	srv.serve = func(ln net.Listener, h http.Handler) error { return srv.httpServer.Serve(ln) }
 	if s != nil {
 		srv.instanceID = s.InstanceID()
@@ -451,6 +456,27 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// verboseMiddleware logs local API requests, including query parameters used
+// for project selection and searches. It is opt-in via ENGRAM_VERBOSE.
+func verboseMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		log.Printf("[engram] %s %s -> %d (%s)", r.Method, r.URL.RequestURI(), recorder.status, time.Since(started).Round(time.Millisecond))
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
 }
 
 func (s *Server) Handler() http.Handler {

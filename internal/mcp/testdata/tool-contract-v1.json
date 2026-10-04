@@ -69,6 +69,7 @@
       },
       "required": ["judgment_id","relation"],
       "additionalProperties": true},
+    "mem_list_projects": {"type":["object"],"additionalProperties":true},
     "mem_merge_projects": {
       "type": ["object"],
       "properties": {
@@ -98,6 +99,7 @@
     "mem_save": {
       "type": ["object"],
       "properties": {
+        "author": {"type":["string"],"additionalProperties":true},
         "capture_prompt": {"type":["boolean"],"additionalProperties":true},
         "content": {"type":["string"],"additionalProperties":true},
         "observation": {"type":["string"],"additionalProperties":true},
@@ -201,6 +203,7 @@
         "content": {"type":["string"],"additionalProperties":true},
         "find": {"type":["string"],"additionalProperties":true},
         "id": {"type":["number"],"additionalProperties":true},
+        "project": {"type":["string"],"additionalProperties":true},
         "replace": {"type":["string"],"additionalProperties":true},
         "scope": {"type":["string"],"additionalProperties":true},
         "title": {"type":["string"],"additionalProperties":true},

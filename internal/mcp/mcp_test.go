@@ -5404,7 +5404,8 @@ func TestWriteSchema_ProjectFieldOnlyForAmbiguousRecovery(t *testing.T) {
 		"mem_session_start",
 		"mem_session_end",
 		"mem_capture_passive",
-		"mem_update",
+		// mem_update is excluded: its "project" field reassigns an existing
+		// observation (c255ac9), not write-target recovery.
 	}
 
 	for _, toolName := range writeTools {

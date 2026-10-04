@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Engram Dashboard</title>
+<script>
+// Apply theme before first paint to avoid a dark/light flash.
+(function () {
+  let t = null;
+  try { t = localStorage.getItem("engram-theme"); } catch (e) {}
+  if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  document.documentElement.dataset.theme = t;
+})();
+</script>
 <style>
 :root {
   --bg: #0d1117;
@@ -17,6 +26,41 @@
   --green: #3fb950;
   --yellow: #d2991d;
   --purple: #bc8cff;
+  --on-accent: #000;
+  --glass-bg: rgba(22,27,34,.72);
+  --glass-border: rgba(120,150,190,.35);
+  --glass-divider: rgba(120,150,190,.22);
+  --tint: rgba(255,255,255,.03);
+  --tint-strong: rgba(255,255,255,.06);
+  --tint-border: rgba(255,255,255,.10);
+  --code-bg: rgba(255,255,255,.08);
+  --chip-project-fg: #d6bcff;
+  --chip-author-fg: #7ee787;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg2: #f6f8fa;
+  --bg3: #eaeef2;
+  --border: #d0d7de;
+  --fg: #1f2328;
+  --fg2: #59636e;
+  --accent: #0969da;
+  --danger: #cf222e;
+  --green: #1a7f37;
+  --yellow: #9a6700;
+  --purple: #8250df;
+  --on-accent: #fff;
+  --glass-bg: rgba(255,255,255,.85);
+  --glass-border: rgba(31,35,40,.15);
+  --glass-divider: rgba(31,35,40,.10);
+  --tint: rgba(31,35,40,.02);
+  --tint-strong: rgba(31,35,40,.04);
+  --tint-border: rgba(31,35,40,.12);
+  --code-bg: rgba(31,35,40,.06);
+  --chip-project-fg: #6639ba;
+  --chip-author-fg: #116329;
+  color-scheme: light;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--fg); min-height: 100vh; display: flex; }
@@ -51,8 +95,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 #detail-panel { position: fixed; inset: 0; z-index: 90; display: none; align-items: center; justify-content: center; padding: 40px; }
 #detail-panel.open { display: flex; }
 #detail-panel::before { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
-#detail-panel .detail-card { position: relative; width: 720px; max-width: 100%; max-height: 80vh; display: flex; flex-direction: column; background: rgba(22,27,34,.72); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); border: 1px solid rgba(120,150,190,.35); border-radius: 16px; box-shadow: 0 24px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.04) inset; overflow: hidden; }
-#detail-panel .detail-header { padding: 18px 22px; border-bottom: 1px solid rgba(120,150,190,.22); display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; background: rgba(255,255,255,.03); }
+#detail-panel .detail-card { position: relative; width: 720px; max-width: 100%; max-height: 80vh; display: flex; flex-direction: column; background: var(--glass-bg); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); border: 1px solid var(--glass-border); border-radius: 16px; box-shadow: 0 24px 60px rgba(0,0,0,.5), 0 0 0 1px var(--tint) inset; overflow: hidden; }
+#detail-panel .detail-header { padding: 18px 22px; border-bottom: 1px solid var(--glass-divider); display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; background: var(--tint); }
 #detail-panel .detail-body { padding: 20px 22px; font-size: 13px; line-height: 1.65; overflow-y: auto; overflow-x: hidden; }
 #detail-panel .detail-body p { margin: 0 0 10px; }
 #detail-panel .detail-body p:last-child { margin-bottom: 0; }
@@ -62,8 +106,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 #detail-panel .detail-body h3 { font-size: 13px; }
 #detail-panel .detail-body strong { font-weight: 700; color: var(--fg); }
 #detail-panel .detail-body em { font-style: italic; color: var(--fg); }
-#detail-panel .detail-body code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid rgba(255,255,255,.08); word-break: break-word; }
-#detail-panel .detail-body pre { background: #0d1117; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); }
+#detail-panel .detail-body code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid var(--code-bg); word-break: break-word; }
+#detail-panel .detail-body pre { background: var(--bg); padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); }
 #detail-panel .detail-body pre code { background: transparent; border: none; padding: 0; font-size: 12px; display: block; white-space: pre; word-break: normal; }
 #detail-panel .detail-body ul, #detail-panel .detail-body ol { margin: 8px 0 10px 20px; }
 #detail-panel .detail-body li { margin: 4px 0; }
@@ -78,18 +122,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
 .detail-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .detail-title-row h2 { font-size: 16px; font-weight: 700; line-height: 1.3; }
 .detail-meta-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
-.meta-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; font-size: 11px; line-height: 1; border: 1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.06); max-width: 100%; }
+.meta-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; font-size: 11px; line-height: 1; border: 1px solid var(--tint-border); background: var(--tint-strong); max-width: 100%; }
 .meta-chip .k { color: var(--fg2); font-size: 10px; text-transform: uppercase; letter-spacing: .35px; font-weight: 700; white-space: nowrap; }
 .meta-chip .v { color: var(--fg); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 .meta-chip.mono .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .meta-chip.project { border-color: rgba(188,140,255,.30); background: rgba(188,140,255,.14); }
-.meta-chip.project .v { color: #d6bcff; }
+.meta-chip.project .v { color: var(--chip-project-fg); }
 .meta-chip.author { border-color: rgba(63,185,80,.30); background: rgba(63,185,80,.14); }
-.meta-chip.author .v { color: #7ee787; }
+.meta-chip.author .v { color: var(--chip-author-fg); }
 .meta-chip.scope { border-color: rgba(88,166,255,.30); background: rgba(88,166,255,.13); }
 .detail-actions { display: flex; gap: 8px; }
 .detail-actions button { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; cursor: pointer; }
-.btn-edit { background: var(--accent); color: #000; border-color: var(--accent); }
+.btn-edit { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .btn-delete { background: transparent; color: var(--danger); border-color: var(--danger); }
 .btn-close { background: var(--bg3); color: var(--fg); }
 #edit-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 60px; }
@@ -119,6 +163,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sa
   <div id="header">
     <h1 id="page-title">All Memories</h1>
     <div class="actions">
+      <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme"></button>
       <button onclick="refresh()">↻ Refresh</button>
     </div>
   </div>
@@ -172,6 +217,18 @@ let currentProject = "";
 let currentObs = null;
 let allObs = [];
 
+function updateThemeButton() {
+  const light = document.documentElement.dataset.theme === "light";
+  document.getElementById("theme-toggle").textContent = light ? "☾ Dark" : "☀ Light";
+}
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("engram-theme", next); } catch (e) {}
+  updateThemeButton();
+}
+updateThemeButton();
+
 function api(path, opts) { return fetch(API + path, opts).then(r => r.json()); }
 
 function fmtTime(s) { if (!s) return ""; const d = new Date(s.replace(" ","T") + "Z"); return d.toLocaleDateString() + " " + d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}); }
@@ -181,24 +238,29 @@ function typeColor(t) {
   return m[t] || "var(--fg2)";
 }
 
-function badge(type) { return `<span class="type-badge" style="background:${typeColor(type)}20;color:${typeColor(type)}">${type||'none'}</span>`; }
+function badge(type) { const c = typeColor(type); return `<span class="type-badge" style="background:color-mix(in srgb, ${c} 13%, transparent);color:${c}">${type||'none'}</span>`; }
 
 async function loadStats() {
   try {
-    const s = await api("/stats");
+    // The dashboard is an administrative, cross-project view.  Without the
+    // explicit all_projects flag the API correctly limits requests to the
+    // server process' detected cwd (which made only motifhawa-web visible).
+    const s = await api("/stats?all_projects=true");
+    const projectStats = await api("/projects/stats");
+    const projects = (projectStats || []).map(p => p.name).filter(Boolean);
     document.getElementById("stats-box").innerHTML =
       `<div>Active: <span class="val">${s.total_observations}</span></div>
        <div>Created: <span class="val">${s.total_created}</span></div>
        <div>Max ID: <span class="val">${s.max_observation_id}</span></div>
        <div>Sessions: <span class="val">${s.total_sessions}</span></div>
        <div>Prompts: <span class="val">${s.total_prompts}</span></div>
-       <div>Projects: <span class="val">${s.projects.length}</span></div>`;
+       <div>Projects: <span class="val">${projects.length}</span></div>`;
     const list = document.getElementById("project-list");
     list.innerHTML = `<li class="${currentProject===''?'active':''}" onclick="setProject('')">All Projects <span class="count">${s.total_observations}</span></li>`;
-    s.projects.forEach(p => {
+    projects.forEach(p => {
       list.innerHTML += `<li class="${currentProject===p?'active':''}" onclick="setProject('${p}')" data-project="${p.replace(/"/g, '&quot;')}">${p}</li>`;
     });
-    loadProjectCounts(s.projects);
+    loadProjectCounts(projects);
   } catch(e) { document.getElementById("stats-box").textContent = "Engram offline"; }
 }
 
@@ -222,7 +284,7 @@ async function loadObservations(project) {
   const obsEl = document.getElementById("obs-list");
   obsEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--fg2)">Loading...</div>';
   try {
-    const query = project ? `/observations?project=${encodeURIComponent(project)}&limit=200` : "/observations?limit=200";
+    const query = project ? `/observations?project=${encodeURIComponent(project)}&limit=200` : "/observations?all_projects=true&limit=200";
     allObs = await api(query);
     if (!Array.isArray(allObs)) { allObs = []; }
     renderObs(allObs);
@@ -372,6 +434,13 @@ async function deleteObservation(o) {
   } catch(e) { alert("Failed to delete"); }
 }
 
+function refresh() {
+  const q = document.getElementById("search-bar").value.trim();
+  loadStats();
+  if (q) document.getElementById("search-bar").dispatchEvent(new Event("input"));
+  else loadObservations(currentProject);
+}
+
 function setProject(p) {
   currentProject = p;
   document.querySelectorAll("#project-list li").forEach(el => el.classList.remove("active"));
@@ -385,7 +454,7 @@ document.getElementById("search-bar").addEventListener("input", async (e) => {
   const q = e.target.value.trim();
   if (!q) { loadObservations(currentProject); return; }
   try {
-    const data = await api(`/search?q=${encodeURIComponent(q)}`);
+    const data = await api(`/search?q=${encodeURIComponent(q)}&all_projects=true`);
     if (Array.isArray(data)) { allObs = data; renderObs(allObs); }
   } catch {}
 });
