@@ -3870,7 +3870,7 @@ test("shutdown stops passive capture after registration", async () => {
       assert.doesNotMatch(otherTurn.systemPrompt, /exact-session context/);
       assert.doesNotMatch(otherTurn.systemPrompt, /already saved/);
       assert.match(nextTurn.systemPrompt, /already saved/);
-      assert.doesNotMatch(nextTurn.systemPrompt, /FIRST ACTION REQUIRED/);
+      assert.doesNotMatch(nextTurn.systemPrompt, /COMPACTION CHECKPOINT:/);
       assert.doesNotMatch(consumedTurn.systemPrompt, /already saved/);
     });
   } finally {

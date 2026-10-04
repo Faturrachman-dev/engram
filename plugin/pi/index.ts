@@ -88,59 +88,69 @@ const ENGRAM_TOOLS = [
 
 const ENGRAM_TOOL_NAMES = new Set<string>(ENGRAM_TOOLS);
 
-const MEMORY_INSTRUCTIONS = `## Engram Persistent Memory — Protocol
+// BEGIN GENERATED memorypolicy (go run ./internal/memorypolicy/cmd/genskills)
+const ENGRAM_POLICY = `## Engram memory — compact policy
 
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
+Work first; remember meaningful outcomes. Do not search, save, or judge before
+every action.
+
+### Retrieve when it adds missing information
+
+Use context already injected or in the conversation; do not refetch it
+because a turn begins. Retrieve when the user asks for prior work, a past
+decision matters, or avoiding rework needs information you lack. Prefer the
+smallest retrieval: recent context or one targeted search. Fetch a full
+observation only when its preview is insufficient. Route to the relevant
+project when known. A simple question may need zero memory reads.
+
+### Save outcomes, not an activity log
+
+Save confirmed, future-useful outcomes: significant decisions, preferences,
+non-obvious discoveries, operational state, and verified root causes or fixes.
+Group related changes into one observation per semantic owner, after the outcome
+is established. Reuse a stable \`topic_key\` or \`mem_update\` a known observation
+for an evolving subject. Do not save routine tests, listings, progress updates,
+failed experiments, speculative diagnoses, or facts cheaply recoverable from
+code. Do not force a save every turn.
+
+### Safety, routing, checkpoints
+
+Never store credentials, cookies, tokens, account identifiers, raw captured
+traffic, or secret fragments. Choose the project by semantic owner, not cwd.
+Route personal Codex/Engram/cross-project preferences to \`codex-config\`, scope
+\`personal\`. Reuse only the authoritative registered session identity; never
+invent one.
+
+Memory operations are internal bookkeeping, never the user-facing answer.
+Complete required memory work before composing the completed-task reply;
+send the complete answer as the final message of the turn with no later tool calls.
+If memory work fails or needs follow-up, still send the answer.
+
+Summarize only at a genuine session close or compaction, not after a normal
+reply, and never twice for one boundary. On a \`COMPACTION CHECKPOINT\` marker,
+save one \`mem_session_summary\` of the compacted work, then continue.
+`
+// END GENERATED memorypolicy
+
+const MEMORY_INSTRUCTIONS = `## Pi memory provider
+
 These instructions are injected by gentle-engram, the Pi-native memory provider. Use the memory tools named in this section as the authoritative Pi memory contract. Do not infer alternative Engram tool names from other integrations unless the user explicitly asks you to use them.
 
-### WHEN TO SAVE (mandatory — not optional)
+${ENGRAM_POLICY}
+### Pi recall notes
 
-Call \`mem_save\` IMMEDIATELY after any of these:
-- Bug fix completed
-- Architecture or design decision made
-- Non-obvious discovery about the codebase
-- Configuration change or environment setup
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
+When recall is genuinely needed, search with 1–2 distinctive keywords.
+Ordinary \`mem_search\` is scoped to the detected active project; its default
+\`match_mode:"all"\` means AND. For broad recall, use \`match_mode:"any"\` with
+\`all_projects:true\`. If a scoped search is empty, retry once this way before
+concluding no memory exists.
+After hits, narrow follow-up searches by project, type, or \`match_mode:"all"\`,
+then use \`mem_get_observation\` for full content.
 
-Format for \`mem_save\`:
-- **title**: Verb + what — short, searchable
-- **type**: bugfix | decision | architecture | discovery | pattern | config | preference
-- **scope**: \`project\` (default) | \`personal\` | \`global\`
-- **topic_key**: stable key for evolving decisions when relevant
-- **content**:
-  **What**: One sentence — what was done
-  **Why**: What motivated it
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you
-
-### DELIVERY GUARANTEE
-
-Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
-
-### WHEN TO SEARCH MEMORY
-
-When the user asks to recall past work:
-1. Start with \`mem_context\`, then search with 1–2 distinctive keywords.
-2. Ordinary \`mem_search\` is scoped to the detected active project; its default
-   \`match_mode:"all"\` means AND. For broad recall, use \`match_mode:"any"\` with
-   \`all_projects:true\`. If a scoped search is empty, retry once this way before
-   concluding no memory exists.
-3. After hits, narrow follow-up searches by project, type, or \`match_mode:"all"\`,
-   then use \`mem_get_observation\` for full content.
-
-### SESSION CLOSE PROTOCOL
-
-Before ending a session or saying "done", call \`mem_session_summary\`
-with Goal, Instructions, Discoveries, Accomplished, Next Steps, and Relevant Files.
-If \`mem_session_summary\` fails because Engram cannot detect a project, ask the user
-which project should receive the summary, then retry with \`project: "<name>"\`.
-
-### AFTER COMPACTION
-
-When outcome-specific compaction recovery guidance is present, follow it. If a
-compacted summary appears without that guidance, save it immediately with
-\`mem_session_summary\`, then call \`mem_context\` before continuing.
+If \`mem_session_summary\` fails because Engram cannot detect a project, ask the
+user which project should receive the summary, then retry with \`project: "<name>"\`.
+When outcome-specific compaction recovery guidance is present, follow it instead
+of the generic checkpoint rule.
 `;
 
 interface FetchOptions {

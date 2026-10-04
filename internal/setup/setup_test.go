@@ -253,16 +253,16 @@ func TestInstallGeminiCLIInjectsMCPConfig(t *testing.T) {
 	}
 	systemText := string(systemRaw)
 	assertGeneratedDeliveryGuarantee(t, systemText)
-	if !strings.Contains(systemText, "### AFTER COMPACTION") {
-		t.Fatalf("expected AFTER COMPACTION section in system prompt")
+	if !strings.Contains(systemText, "Engram memory — compact policy") {
+		t.Fatalf("expected canonical policy header in system prompt")
 	}
-	if !strings.Contains(systemText, "FIRST ACTION REQUIRED") {
-		t.Fatalf("expected FIRST ACTION REQUIRED guidance in system prompt")
+	if !strings.Contains(systemText, "Gemini CLI has no SessionEnd hook") {
+		t.Fatalf("expected Gemini session-close reminder in system prompt")
 	}
-	summaryIndex := strings.Index(systemText, "After mem_session_summary succeeds")
-	endIndex := strings.Index(systemText, "call mem_session_end before closing the session")
+	summaryIndex := strings.Index(systemText, "mem_session_summary")
+	endIndex := strings.Index(systemText, "mem_session_end")
 	if summaryIndex == -1 || endIndex == -1 || summaryIndex > endIndex {
-		t.Fatalf("expected Gemini close instructions to require summary before end, got:\n%s", systemText)
+		t.Fatalf("expected mem_session_summary before mem_session_end in Gemini close reminder, got:\n%s", systemText)
 	}
 
 	// GEMINI_SYSTEM_MD should NOT be set (it breaks Gemini outside $HOME)
@@ -548,7 +548,7 @@ func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
 		if !strings.Contains(text, "command = ") || !strings.Contains(text, "engram") {
 			t.Fatalf("expected engram command in config, got:\n%s", text)
 		}
-		if !strings.Contains(text, `args = ["mcp", "--tools=agent"]`) {
+		if !strings.Contains(text, `args = ["mcp", "--tools=agent", "--memory-mode=minimal"]`) {
 			t.Fatalf("expected engram args in config, got:\n%s", text)
 		}
 		if strings.Contains(text, "model_instructions_file") {
@@ -576,16 +576,21 @@ func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
 		t.Fatalf("read codex instructions: %v", err)
 	}
 	assertGeneratedDeliveryGuarantee(t, string(instructionsRaw))
-	if !strings.Contains(string(instructionsRaw), "### AFTER COMPACTION") {
-		t.Fatalf("expected AFTER COMPACTION section in codex instructions")
+	if !strings.Contains(string(instructionsRaw), "Engram memory — compact policy") {
+		t.Fatalf("expected canonical policy header in codex instructions")
 	}
 
 	compactRaw, err := os.ReadFile(codexCompactPromptPath())
 	if err != nil {
 		t.Fatalf("read codex compact prompt: %v", err)
 	}
-	if !strings.Contains(string(compactRaw), "FIRST ACTION REQUIRED") {
-		t.Fatalf("expected FIRST ACTION REQUIRED text in compact prompt")
+	if !strings.Contains(string(compactRaw), "COMPACTION CHECKPOINT: save this compacted summary once with mem_session_summary") {
+		t.Fatalf("expected single COMPACTION CHECKPOINT line in compact prompt")
+	}
+	for _, banned := range []string{"FIRST ACTION REQUIRED", "call mem_context", "MUST"} {
+		if strings.Contains(string(compactRaw), banned) {
+			t.Fatalf("compact prompt must not contain %q (context is already injected)", banned)
+		}
 	}
 }
 
@@ -2792,7 +2797,7 @@ func TestCodexBlockUsesAbsolutePath(t *testing.T) {
 			if !strings.Contains(block, "[mcp_servers.engram]") {
 				t.Fatalf("expected mcp_servers.engram header, got:\n%s", block)
 			}
-			if !strings.Contains(block, `args = ["mcp", "--tools=agent"]`) {
+			if !strings.Contains(block, `args = ["mcp", "--tools=agent", "--memory-mode=minimal"]`) {
 				t.Fatalf("expected args in codex block, got:\n%s", block)
 			}
 			if block == codexEngramBlock {
@@ -3744,7 +3749,7 @@ func TestClaudeCodeUserPromptHookWithoutJQPreservesSessionStateAndNudge(t *testi
 	}
 
 	firstOutput, _ := runHook(input, env)
-	if !strings.Contains(firstOutput, "CRITICAL FIRST ACTION") {
+	if !strings.Contains(firstOutput, "Engram memory tools are available this session") {
 		t.Fatalf("first hook invocation = %q, want bootstrap response", firstOutput)
 	}
 
@@ -3754,7 +3759,7 @@ func TestClaudeCodeUserPromptHookWithoutJQPreservesSessionStateAndNudge(t *testi
 	}
 
 	thirdOutput, _ := runHook(input, env)
-	if strings.Contains(thirdOutput, "MEMORY REMINDER") || strings.Contains(thirdOutput, "CRITICAL FIRST ACTION") {
+	if strings.Contains(thirdOutput, "MEMORY REMINDER") || strings.Contains(thirdOutput, "Engram memory tools are available this session") {
 		t.Fatalf("third hook invocation = %q, want cooldown response", thirdOutput)
 	}
 
@@ -3835,7 +3840,7 @@ func TestClaudeCodeUserPromptHookWithoutJQPreservesSessionStateAndNudge(t *testi
 	for _, sessionID := range []string{"a/b", "a?b"} {
 		collisionInput := fmt.Sprintf(`{"cwd":"%s","session_id":"%s","prompt":""}`, cwd, sessionID)
 		output, _ := runHook(collisionInput, collisionEnv)
-		if !strings.Contains(output, "CRITICAL FIRST ACTION") {
+		if !strings.Contains(output, "Engram memory tools are available this session") {
 			t.Fatalf("first hook invocation for unsafe session %q = %q, want bootstrap response", sessionID, output)
 		}
 	}

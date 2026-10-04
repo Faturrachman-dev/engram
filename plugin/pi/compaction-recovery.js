@@ -59,10 +59,9 @@ export function extractCompactedSummary(event) {
 
 export function recoveryInstruction(project) {
   return (
-    `CRITICAL INSTRUCTION FOR COMPACTED SUMMARY:\n` +
-    `The agent has access to Engram persistent memory via MCP tools when gentle-engram and the Engram MCP tools are installed and active.\n` +
-    `FIRST ACTION REQUIRED: Call mem_session_summary with the content of this compacted summary. ` +
-    `Use project: '${project}'. This preserves what was accomplished before compaction. Do this BEFORE any other work.\n` +
+    `COMPACTION CHECKPOINT:\n` +
+    `gentle-engram did not archive this compacted summary. When gentle-engram and the Engram MCP tools are installed and active, ` +
+    `save it once with mem_session_summary. Use project: '${project}'. Then continue; recent context is already injected.\n` +
     `If mem_session_summary is unavailable, manually save this compacted summary once Engram tools are available.`
   );
 }

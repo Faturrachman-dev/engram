@@ -354,14 +354,14 @@ func TestInstallDeclarativeAgentsRegisterMCPAndInstructions(t *testing.T) {
 			}
 			instr := string(instrRaw)
 			assertGeneratedDeliveryGuarantee(t, instr)
-			if !strings.Contains(instr, "Engram Persistent Memory") {
-				t.Errorf("%s: instruction file missing protocol content", agent.slug)
+			if !strings.Contains(instr, "Engram memory — compact policy") {
+				t.Errorf("%s: instruction file missing canonical policy header", agent.slug)
 			}
-			if !strings.Contains(instr, "SESSION CLOSE PROTOCOL") {
-				t.Errorf("%s: instruction file missing full-protocol SESSION CLOSE section (adapter is full-only, not slim-eligible)", agent.slug)
+			if !strings.Contains(instr, "Save outcomes, not an activity log") {
+				t.Errorf("%s: instruction file missing canonical save section", agent.slug)
 			}
-			if !strings.Contains(instr, "AFTER COMPACTION") {
-				t.Errorf("%s: instruction file missing full-protocol AFTER COMPACTION section (adapter is full-only, not slim-eligible)", agent.slug)
+			if !strings.Contains(instr, "Safety, routing, checkpoints") {
+				t.Errorf("%s: instruction file missing canonical safety/routing section", agent.slug)
 			}
 			if agent.style == markerBlock {
 				begin := strings.Index(instr, engramMarkerBegin)
@@ -400,14 +400,14 @@ func TestInstallDeclarativeAgentsRegisterMCPAndInstructions(t *testing.T) {
 
 func assertGeneratedDeliveryGuarantee(t *testing.T, instructions string) {
 	t.Helper()
-	for _, requirement := range []string{
+	// The canonical compact policy carries the delivery guarantee (PRD R3):
+	// a memory problem must never block the completed answer.
+	for _, sentence := range []string{
 		"Memory operations are internal bookkeeping, never the user-facing answer.",
-		"Complete required memory work before composing the completed-task reply;",
-		"send the complete answer as the final message of the turn with no later tool calls.",
 		"If memory work fails or needs follow-up, still send the answer.",
 	} {
-		if !strings.Contains(instructions, requirement) {
-			t.Errorf("instruction file missing delivery guarantee: %q", requirement)
+		if !strings.Contains(instructions, sentence) {
+			t.Errorf("instruction file missing delivery guarantee: %q", sentence)
 		}
 	}
 }
@@ -431,7 +431,7 @@ func TestCursorMemoryProtocolHasNoFrontmatter(t *testing.T) {
 		t.Fatalf("cursor: memory protocol file not written at %s: %v", cursorMemoryProtocolPath(), err)
 	}
 	content := string(protocolRaw)
-	if !strings.Contains(content, "Engram Persistent Memory") {
+	if !strings.Contains(content, "Engram memory — compact policy") {
 		t.Errorf("cursor: memory protocol file missing expected content")
 	}
 	if strings.Contains(content, "alwaysApply") {

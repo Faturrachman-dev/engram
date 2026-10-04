@@ -60,89 +60,59 @@ function canonicalEngramToolName(tool: string): string {
 }
 
 // ─── Memory Instructions ─────────────────────────────────────────────────────
-// These get injected into the agent's context so it knows to call mem_save.
+// Injected into the system prompt. The body is generated from the canonical
+// policy in internal/memorypolicy; edit policy.md, then regenerate.
 
-const MEMORY_INSTRUCTIONS = `## Engram Persistent Memory — Protocol
+// BEGIN GENERATED memorypolicy (go run ./internal/memorypolicy/cmd/genskills)
+const ENGRAM_POLICY = `## Engram memory — compact policy
 
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
+Work first; remember meaningful outcomes. Do not search, save, or judge before
+every action.
 
-### WHEN TO SAVE (mandatory — not optional)
+### Retrieve when it adds missing information
 
-Call \`mem_save\` IMMEDIATELY after any of these:
-- Bug fix completed
-- Architecture or design decision made
-- Non-obvious discovery about the codebase
-- Configuration change or environment setup
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
+Use context already injected or in the conversation; do not refetch it
+because a turn begins. Retrieve when the user asks for prior work, a past
+decision matters, or avoiding rework needs information you lack. Prefer the
+smallest retrieval: recent context or one targeted search. Fetch a full
+observation only when its preview is insufficient. Route to the relevant
+project when known. A simple question may need zero memory reads.
 
-Format for \`mem_save\`:
-- **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
-- **type**: bugfix | decision | architecture | discovery | pattern | config | preference
-- **scope**: \`project\` (default) | \`personal\` | \`global\`
-- **topic_key** (optional, recommended for evolving decisions): stable key like \`architecture/auth-model\`
-- **content**:
-  **What**: One sentence — what was done
-  **Why**: What motivated it (user request, bug, performance, etc.)
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you (omit if none)
+### Save outcomes, not an activity log
 
-Topic rules:
-- Different topics must not overwrite each other (e.g. architecture vs bugfix)
-- Reuse the same \`topic_key\` to update an evolving topic instead of creating new observations
-- If unsure about the key, call \`mem_suggest_topic_key\` first and then reuse it
-- Use \`mem_update\` when you have an exact observation ID to correct
+Save confirmed, future-useful outcomes: significant decisions, preferences,
+non-obvious discoveries, operational state, and verified root causes or fixes.
+Group related changes into one observation per semantic owner, after the outcome
+is established. Reuse a stable \`topic_key\` or \`mem_update\` a known observation
+for an evolving subject. Do not save routine tests, listings, progress updates,
+failed experiments, speculative diagnoses, or facts cheaply recoverable from
+code. Do not force a save every turn.
 
-### DELIVERY GUARANTEE
+### Safety, routing, checkpoints
 
-Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
+Never store credentials, cookies, tokens, account identifiers, raw captured
+traffic, or secret fragments. Choose the project by semantic owner, not cwd.
+Route personal Codex/Engram/cross-project preferences to \`codex-config\`, scope
+\`personal\`. Reuse only the authoritative registered session identity; never
+invent one.
 
-### WHEN TO SEARCH MEMORY
+Memory operations are internal bookkeeping, never the user-facing answer.
+Complete required memory work before composing the completed-task reply;
+send the complete answer as the final message of the turn with no later tool calls.
+If memory work fails or needs follow-up, still send the answer.
 
-When the user asks to recall something — any variation of "remember", "recall", "what did we do",
-"how did we solve", or the equivalent in the user's language, or references to past work:
-1. First call \`mem_context\` — checks recent session history (fast, cheap)
-2. If not found, call \`mem_search\` with relevant keywords (FTS5 full-text search)
-3. If you find a match, use \`mem_get_observation\` for full untruncated content
+Summarize only at a genuine session close or compaction, not after a normal
+reply, and never twice for one boundary. On a \`COMPACTION CHECKPOINT\` marker,
+save one \`mem_session_summary\` of the compacted work, then continue.
+`
+// END GENERATED memorypolicy
 
-Also search memory PROACTIVELY when:
-- Starting work on something that might have been done before
-- The user mentions a topic you have no context on — check if past sessions covered it
-- The user's FIRST message references the project, a feature, or a problem — call \`mem_search\` with keywords from their message to check for prior work before responding
+const MEMORY_INSTRUCTIONS = `${ENGRAM_POLICY}
+### OpenCode compaction
 
-### SESSION CLOSE PROTOCOL (mandatory)
-
-Before ending a session or saying "done" / "that's it", you MUST:
-1. Call \`mem_session_summary\` with this structure:
-
-## Goal
-[What we were working on this session]
-
-## Instructions
-[User preferences or constraints discovered — skip if none]
-
-## Discoveries
-- [Technical findings, gotchas, non-obvious learnings]
-
-## Accomplished
-- [Completed items with key details]
-
-## Next Steps
-- [What remains to be done — for the next session]
-
-## Relevant Files
-- path/to/file — [what it does or what changed]
-
-This is NOT optional. If you skip this, the next session starts blind.
-
-### AFTER COMPACTION
-
-If you see a message about compaction or context reset, or if you see "FIRST ACTION REQUIRED" in your context:
-1. IMMEDIATELY call \`mem_session_summary\` with the compacted summary content — this persists what was done before compaction
-2. The session-only compaction context has already been injected. Do not automatically call \`mem_context\`, which is project-scoped; use it only when explicitly requested.
-3. Only THEN continue working
-
-Do not skip step 1. Without it, everything done before compaction is lost from memory.
+The session-only compaction context has already been injected. Do not
+automatically call \`mem_context\`, which is project-scoped; use it only when
+explicitly requested.
 `
 
 // ─── HTTP Client ─────────────────────────────────────────────────────────────
@@ -1006,16 +976,13 @@ export const Engram: Plugin = async (ctx) => {
         }
       }
 
-      // Tell the compressor to instruct the new agent to persist the
-      // compacted summary to Engram. The new agent reads the compacted
-      // summary and this instruction, then saves it as a session summary.
+      // Ask the compressor to carry one checkpoint marker into the compacted
+      // summary so the next agent persists it once. Context is already
+      // injected above, so no follow-up mem_context call is requested.
       output.context.push(
-        `CRITICAL INSTRUCTION FOR COMPACTED SUMMARY:\n` +
-        `The agent has access to Engram persistent memory via MCP tools.\n` +
-        `You MUST include the following instruction at the TOP of the compacted summary:\n\n` +
-        `"FIRST ACTION REQUIRED: Call mem_session_summary with the content of this compacted summary. ` +
-        `Use project: '${projectForSession(sessionId)}'. This preserves what was accomplished before compaction. Do this BEFORE any other work."\n\n` +
-        `This is NOT optional. Without this, everything done before compaction is lost from memory.`
+        `Engram compaction checkpoint. Put this line at the TOP of the compacted summary:\n\n` +
+        `"COMPACTION CHECKPOINT: save this compacted summary once with mem_session_summary. ` +
+        `Use project: '${projectForSession(sessionId)}'. Then continue; recent context is already injected."`
       )
     },
   }

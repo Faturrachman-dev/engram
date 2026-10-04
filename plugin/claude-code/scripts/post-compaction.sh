@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Engram — Post-compaction hook for Claude Code
 #
-# When compaction happens, inject Memory Protocol + context and instruct
-# the agent to persist the compacted summary via mem_session_summary.
+# When compaction happens, inject a compact-policy pointer, one compaction
+# checkpoint (persist the compacted summary once), and bounded context.
 
 # Load shared helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -43,66 +43,25 @@ if [ "$mode" != "slim" ]; then
   mode="full"
 fi
 
-# Inject Memory Protocol + compaction instruction + context. Only the static
-# protocol prose is gated on $mode — the "CRITICAL INSTRUCTION" header below
-# and the numbered recovery steps that follow it stay unconditional (they are
-# the compaction-recovery contract itself, not the duplicated protocol text).
+# Inject the compact-policy pointer (gated on $mode) and one unconditional
+# compaction checkpoint. The checkpoint is the compaction-recovery contract;
+# context is injected below, so no follow-up mem_context call is requested.
 if [ "$mode" != "slim" ]; then
 cat <<'PROTOCOL'
-## Engram Persistent Memory — ACTIVE PROTOCOL
+## Engram memory
 
-You have engram memory tools. This protocol is MANDATORY and ALWAYS ACTIVE.
+Engram memory tools are available. Follow the engram-memory skill (compact
+policy): work first, retrieve only when it adds missing information, save
+confirmed outcomes once per semantic owner, and summarize only at a genuine
+session close or compaction. Use the context below instead of refetching it.
 
-### CORE TOOLS — always available, no ToolSearch needed
-mem_save, mem_search, mem_context, mem_session_summary, mem_get_observation, mem_save_prompt, mem_current_project, mem_judge, mem_compare
-
-Use ToolSearch for other tools: mem_update, mem_review, mem_pin, mem_unpin, mem_suggest_topic_key, mem_session_start, mem_session_end, mem_doctor, mem_capture_passive
-
-### PROACTIVE SAVE — do NOT wait for user to ask
-Call `mem_save` IMMEDIATELY after ANY of these:
-- Decision made (architecture, convention, workflow, tool choice)
-- Bug fixed (include root cause)
-- Convention or workflow documented/updated
-- Notion/Jira/GitHub artifact created or updated with significant content
-- Non-obvious discovery, gotcha, or edge case found
-- Pattern established (naming, structure, approach)
-- User preference or constraint learned
-- Feature implemented with non-obvious approach
-
-**Self-check after EVERY task**: "Did I just make a decision, fix a bug, learn something, or establish a convention? If yes → mem_save NOW."
-
-### DELIVERY GUARANTEE
 Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
-
-### SEARCH MEMORY when:
-- User asks to recall anything ("remember", "what did we do", or the equivalent in the user's language)
-- Starting work on something that might have been done before
-- User mentions a topic you have no context on
-
-### SESSION CLOSE — before saying "done":
-Call `mem_session_summary` with: Goal, Discoveries, Accomplished, Next Steps, Relevant Files.
-
----
 
 PROTOCOL
 fi
 
-# Unconditional lead-in for the numbered recovery steps below — this is the
-# compaction-recovery contract itself, not duplicated protocol prose, so it
-# stays outside the $mode gate even when the static protocol text is slim.
-echo "CRITICAL INSTRUCTION POST-COMPACTION — follow these steps IN ORDER:"
-
-printf "\n1. FIRST: Call mem_session_summary with the content of the compacted summary above. Use project: '%s'.\n" "$PROJECT"
-printf "   This preserves what was accomplished before compaction.\n\n"
-printf "2. THEN: Call mem_context with project: '%s' to recover recent session history and observations.\n" "$PROJECT"
-printf "   Read the returned context carefully — it tells you what was being worked on.\n\n"
-cat <<'PROTOCOL'
-3. If you need more detail on a specific topic, call mem_search with relevant keywords.
-
-4. Only THEN continue working on what the user asked.
-
-All 4 steps are MANDATORY. Without them, you lose context and start blind.
-PROTOCOL
+printf "COMPACTION CHECKPOINT: save the compacted summary above once with mem_session_summary. Use project: '%s'.\n" "$PROJECT"
+printf '%s\n' 'Then continue; recent context is below, so call mem_context only if more detail is needed.'
 
 # Inject memory context if available
 if [ -n "$CONTEXT" ]; then

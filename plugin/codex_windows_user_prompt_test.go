@@ -275,7 +275,7 @@ func TestCodexWindowsNativeUserPromptTrustedPinForwardsInputAndMeetsTimingBudget
 		}
 		return string(stdout), time.Since(start)
 	}
-	for _, want := range []string{"CRITICAL FIRST ACTION", "MEMORY REMINDER"} {
+	for _, want := range []string{"Engram memory tools are available", "MEMORY REMINDER"} {
 		if output, _ := run("window-session"); !strings.Contains(output, want) {
 			t.Fatalf("output=%q, want %q", output, want)
 		}

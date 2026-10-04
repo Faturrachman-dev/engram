@@ -4,7 +4,7 @@
 # 1. Ensures the engram server is running
 # 2. Creates a session in engram
 # 3. Auto-imports git-synced chunks if .engram/manifest.json exists
-# 4. Injects Memory Protocol instructions + memory context
+# 4. Injects a short compact-policy pointer + bounded memory context
 
 IMPORT_TIMEOUT_SECS=8
 LOCK_TTL_SECS=$((IMPORT_TIMEOUT_SECS + 4))
@@ -161,45 +161,18 @@ if [ "$mode" != "slim" ]; then
   mode="full"
 fi
 
-# Inject Memory Protocol + context — stdout goes to Claude as additionalContext
+# Inject a short pointer to the compact policy (the full policy ships in the
+# engram-memory skill) + context. stdout goes to Claude as additionalContext.
 if [ "$mode" != "slim" ]; then
 cat <<'PROTOCOL'
-## Engram Persistent Memory — ACTIVE PROTOCOL
+## Engram memory
 
-You have engram memory tools. This protocol is MANDATORY and ALWAYS ACTIVE.
+Engram memory tools are available. Follow the engram-memory skill (compact
+policy): work first, retrieve only when it adds missing information, save
+confirmed outcomes once per semantic owner, and summarize only at a genuine
+session close or compaction. Use the context below instead of refetching it.
 
-### CORE TOOLS — always available, no ToolSearch needed
-mem_save, mem_search, mem_context, mem_session_summary, mem_get_observation, mem_save_prompt, mem_current_project, mem_judge, mem_compare
-
-Use ToolSearch for other tools: mem_update, mem_review, mem_pin, mem_unpin, mem_suggest_topic_key, mem_session_start, mem_session_end, mem_doctor, mem_capture_passive
-
-### PROACTIVE SAVE — do NOT wait for user to ask
-Call `mem_save` IMMEDIATELY after ANY of these:
-- Decision made (architecture, convention, workflow, tool choice)
-- Bug fixed (include root cause)
-- Convention or workflow documented/updated
-- Notion/Jira/GitHub artifact created or updated with significant content
-- Non-obvious discovery, gotcha, or edge case found
-- Pattern established (naming, structure, approach)
-- User preference or constraint learned
-- Feature implemented with non-obvious approach
-- User confirms your recommendation ("go with that", "sounds good", or the equivalent in the user's language)
-- User rejects an approach or expresses a preference ("no, better X", "I prefer X", or the equivalent in the user's language)
-- Discussion concludes with a clear direction chosen
-
-**Self-check after EVERY task**: "Did I or the user just make a decision, confirm a recommendation, express a preference, fix a bug, learn something, or establish a convention? If yes → mem_save NOW."
-
-### DELIVERY GUARANTEE
 Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
-
-### SEARCH MEMORY when:
-- User asks to recall anything ("remember", "what did we do", or the equivalent in the user's language)
-- Starting work on something that might have been done before
-- User mentions a topic you have no context on
-- User's FIRST message references the project, a feature, or a problem — call `mem_search` with keywords from their message to check for prior work before responding
-
-### SESSION CLOSE — before saying "done":
-Call `mem_session_summary` with: Goal, Discoveries, Accomplished, Next Steps, Relevant Files.
 PROTOCOL
 fi
 

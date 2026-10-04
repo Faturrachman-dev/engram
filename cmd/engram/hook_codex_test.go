@@ -518,7 +518,7 @@ func TestCodexUserPromptFirstMessageIsNetworkIndependent(t *testing.T) {
 			}))
 			defer server.Close()
 			output := runCodexUserPromptSubmitLegacy([]byte(`{"cwd":"C:/work","session_id":"first","prompt":"remember this"}`), server.URL, t.TempDir(), time.Now)
-			if !strings.Contains(string(output), "CRITICAL FIRST ACTION") || !json.Valid(output) {
+			if !strings.Contains(string(output), "Engram memory tools are available") || !json.Valid(output) {
 				t.Fatalf("first output = %q, want valid ToolSearch JSON", output)
 			}
 			if got := posts.Load(); got != tc.wantPosts {
@@ -550,7 +550,7 @@ func TestCodexUserPromptSubsequentMessageSharesDeadlineAndPersistsOnce(t *testin
 	defer server.Close()
 	stateDir := t.TempDir()
 	input := []byte(`{"cwd":"C:/work","session_id":"s-1","prompt":"persist once"}`)
-	if got := string(runCodexUserPromptSubmitLegacy(input, server.URL, stateDir, func() time.Time { return now })); !strings.Contains(got, "CRITICAL FIRST ACTION") {
+	if got := string(runCodexUserPromptSubmitLegacy(input, server.URL, stateDir, func() time.Time { return now })); !strings.Contains(got, "Engram memory tools are available") {
 		t.Fatalf("first output = %q, want ToolSearch", got)
 	}
 	if got := string(runCodexUserPromptSubmitLegacy(input, server.URL, stateDir, func() time.Time { return now })); !strings.Contains(got, "MEMORY REMINDER") {
@@ -638,7 +638,7 @@ func TestCodexUserPromptReminderBoundaries(t *testing.T) {
 			for i, want := range []bool{false, tc.wantSecond, tc.wantThird} {
 				got := string(runCodexUserPromptSubmitLegacy(input, server.URL, state, func() time.Time { return now }))
 				if i == 0 {
-					if !strings.Contains(got, "CRITICAL FIRST ACTION") {
+					if !strings.Contains(got, "Engram memory tools are available") {
 						t.Fatalf("first output = %q", got)
 					}
 					continue
@@ -732,7 +732,7 @@ func TestCodexUserPromptFirstPromptPersistsThroughServer(t *testing.T) {
 		t.Run(tc.id, func(t *testing.T) {
 			input, _ := json.Marshal(codexPromptInput{CWD: worktree, SessionID: tc.id, Prompt: tc.prompt})
 			output := runCodexUserPromptSubmitLegacy(input, ts.URL, t.TempDir(), time.Now)
-			if !json.Valid(output) || !strings.Contains(string(output), "CRITICAL FIRST ACTION") {
+			if !json.Valid(output) || !strings.Contains(string(output), "Engram memory tools are available") {
 				t.Fatalf("first output: %s", output)
 			}
 			resp, err := ts.Client().Get(ts.URL + "/prompts/recent?project=" + url.QueryEscape("codex-hook-test"))
@@ -769,7 +769,7 @@ func TestCodexUserPromptInvalidPort(t *testing.T) {
 				t.Fatalf("URL = %q, want empty", got)
 			}
 			output := runCodexUserPromptSubmitLegacy([]byte(`{"cwd":"C:/work","session_id":"s","prompt":"hello"}`), codexHookURL(), t.TempDir(), time.Now)
-			if !strings.Contains(string(output), "CRITICAL FIRST ACTION") {
+			if !strings.Contains(string(output), "Engram memory tools are available") {
 				t.Fatalf("first output = %q", output)
 			}
 		})
@@ -780,7 +780,7 @@ func TestCodexUserPromptSessionMarkersAreIsolated(t *testing.T) {
 	stateDir := t.TempDir()
 	for _, sessionID := range []string{"one", "two"} {
 		output := runCodexUserPromptSubmitLegacy([]byte(`{"session_id":"`+sessionID+`"}`), "", stateDir, time.Now)
-		if !strings.Contains(string(output), "CRITICAL FIRST ACTION") {
+		if !strings.Contains(string(output), "Engram memory tools are available") {
 			t.Fatalf("session %q did not receive its first-message ToolSearch: %q", sessionID, output)
 		}
 	}
@@ -810,7 +810,7 @@ func TestCodexUserPromptTimeoutFailsOpenWithoutRetry(t *testing.T) {
 	defer server.Close()
 	stateDir := t.TempDir()
 	input := []byte(`{"cwd":"C:/work","session_id":"timeout","prompt":"once"}`)
-	if got := string(runCodexUserPromptSubmitLegacy(input, server.URL, stateDir, time.Now)); !strings.Contains(got, "CRITICAL FIRST ACTION") {
+	if got := string(runCodexUserPromptSubmitLegacy(input, server.URL, stateDir, time.Now)); !strings.Contains(got, "Engram memory tools are available") {
 		t.Fatalf("timed-out first output = %q, want ToolSearch", got)
 	}
 	if got := string(runCodexUserPromptSubmitLegacy(input, server.URL, stateDir, time.Now)); got != "{}" {
@@ -823,7 +823,7 @@ func TestCodexUserPromptTimeoutFailsOpenWithoutRetry(t *testing.T) {
 }
 func TestCodexUserPromptMalformedInputFailsOpen(t *testing.T) {
 	output := runCodexUserPromptSubmitLegacy([]byte(`{`), "http://127.0.0.1:1", t.TempDir(), time.Now)
-	if !json.Valid(output) || !strings.Contains(string(output), "CRITICAL FIRST ACTION") {
+	if !json.Valid(output) || !strings.Contains(string(output), "Engram memory tools are available") {
 		t.Fatalf("malformed output = %q, want valid first-message JSON", output)
 	}
 }

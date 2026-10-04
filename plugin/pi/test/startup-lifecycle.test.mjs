@@ -407,7 +407,8 @@ test("before_agent_start injects actionable mem_search recall guidance", async (
     assert.ok(beforeAgentStart, "before_agent_start is registered");
 
     const result = await beforeAgentStart({ systemPrompt: "base", prompt: "recall past work" }, ctx);
-    assert.match(result.systemPrompt, /Start with `mem_context`, then search with 1–2 distinctive keywords/);
+    assert.match(result.systemPrompt, /When recall is genuinely needed, search with 1–2 distinctive keywords/);
+    assert.doesNotMatch(result.systemPrompt, /IMMEDIATELY after|mandatory|FIRST ACTION REQUIRED/i);
     assert.match(result.systemPrompt, /Ordinary `mem_search` is scoped to the detected active project/);
     assert.match(result.systemPrompt, /`match_mode:"all"` means AND/);
     assert.match(result.systemPrompt, /`match_mode:"any"` with\s+`all_projects:true`/);

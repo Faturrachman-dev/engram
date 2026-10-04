@@ -39,8 +39,8 @@ if [ "$REGISTERED" -ne 1 ]; then
   fi
   exit 0
 fi
-printf "1. FIRST: Call mem_session_summary with the compacted summary above. Use project: '%s'.\n" "$PROJECT"
-printf '%s\n' '2. Read the compact context below; call mem_context only if more detail is needed.'
+printf "COMPACTION CHECKPOINT: save the compacted summary above once with mem_session_summary. Use project: '%s'.\n" "$PROJECT"
+printf '%s\n' 'Then continue; recent context is below, so call mem_context only if more detail is needed.'
 
 # Inject memory context if available
 if [ -n "$CONTEXT" ]; then

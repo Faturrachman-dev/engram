@@ -26,27 +26,29 @@ test("extractCompactedSummary prefers Pi's current entry summary and falls throu
   );
 });
 
-test("recoveryInstruction keeps manual FIRST ACTION REQUIRED fallback", () => {
+test("recoveryInstruction keeps a single manual COMPACTION CHECKPOINT fallback", () => {
   const notice = recoveryInstruction("engram");
-  assert.match(notice, /FIRST ACTION REQUIRED/);
+  assert.match(notice, /^COMPACTION CHECKPOINT/);
+  assert.match(notice, /Use project: 'engram'/);
+  assert.doesNotMatch(notice, /FIRST ACTION REQUIRED|mem_context|BEFORE any other work/);
   assert.match(notice, /mem_session_summary/);
   assert.match(notice, /gentle-engram and the Engram MCP tools are installed and active/);
   assert.match(notice, /If mem_session_summary is unavailable/);
 });
 
 test("buildRecoveryNotice prefixes context when available", () => {
-  assert.equal(buildRecoveryNotice("engram", "existing context").startsWith("existing context\n\nCRITICAL"), true);
-  assert.equal(buildRecoveryNotice("engram", "").startsWith("CRITICAL"), true);
+  assert.equal(buildRecoveryNotice("engram", "existing context").startsWith("existing context\n\nCOMPACTION CHECKPOINT"), true);
+  assert.equal(buildRecoveryNotice("engram", "").startsWith("COMPACTION CHECKPOINT"), true);
 });
 
 test("buildRecoveryNotice maps archive outcomes to safe next-turn guidance", () => {
   const confirmed = buildRecoveryNotice("engram", "context", ArchiveOutcome.Confirmed);
-  assert.doesNotMatch(confirmed, /FIRST ACTION REQUIRED/);
+  assert.doesNotMatch(confirmed, /COMPACTION CHECKPOINT/);
   assert.match(confirmed, /already saved/);
   assert.match(confirmed, /No manual mem_session_summary/);
 
   const failed = buildRecoveryNotice("engram", undefined, ArchiveOutcome.Failed);
-  assert.match(failed, /FIRST ACTION REQUIRED/);
+  assert.match(failed, /COMPACTION CHECKPOINT/);
   assert.match(failed, /mem_session_summary/);
 
   const unknown = buildRecoveryNotice("engram", undefined, ArchiveOutcome.Unknown);

@@ -1382,15 +1382,19 @@ test("compaction resolves an unobserved child and registers only its root", asyn
   assert.equal(new URL(compactionContext?.url).searchParams.get("session_id"), "root")
   assert.equal(runtime.requests.some(({ path }) => path === "/context"), false)
   assert.ok(output.context.includes("root-only context"))
-  assert.match(output.context.at(-1), /FIRST ACTION REQUIRED/)
+  assert.match(output.context.at(-1), /COMPACTION CHECKPOINT/)
 })
 
 test("post-compaction protocol relies on injected session-only context", () => {
-	const afterCompaction = source.match(/### AFTER COMPACTION[\s\S]*?Do not skip step 1\.[\s\S]*?memory\./)?.[0]
-  assert.ok(afterCompaction, "AFTER COMPACTION protocol must exist")
+  const afterCompaction = source.match(/### OpenCode compaction[\s\S]*?explicitly requested\./)?.[0]
+  assert.ok(afterCompaction, "OpenCode compaction note must exist")
   assert.match(afterCompaction, /session-only compaction context has already been injected/)
-  assert.match(afterCompaction, /use it only when explicitly requested/)
+  assert.match(afterCompaction, /use it only when\s+explicitly requested/)
   assert.doesNotMatch(afterCompaction, /\d\.\s+(?:Then )?call `mem_context`/)
+  const checkpoint = source.match(/COMPACTION CHECKPOINT: [^"]*"/)?.[0]
+  assert.ok(checkpoint, "compaction checkpoint marker must exist")
+  assert.doesNotMatch(checkpoint, /mem_context/)
+  assert.doesNotMatch(source, /FIRST ACTION REQUIRED|IMMEDIATELY after|MANDATORY/i)
 })
 
 test("compaction skips invalid or missing sessions and still injects recovery context", async (t) => {
@@ -1414,7 +1418,7 @@ test("compaction skips invalid or missing sessions and still injects recovery co
 
       assertNoRegistration(runtime)
       assert.equal(runtime.requests.some(({ path }) => path === "/context/compaction" || path === "/context"), false)
-      assert.match(output.context.at(-1), /FIRST ACTION REQUIRED/)
+      assert.match(output.context.at(-1), /COMPACTION CHECKPOINT/)
     })
   }
 })

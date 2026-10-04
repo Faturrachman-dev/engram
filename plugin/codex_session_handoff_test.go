@@ -367,14 +367,14 @@ func TestCodexRegisteredSessionHandoff(t *testing.T) {
 						}
 					}
 					if event == "compact" {
-						first := strings.Index(output, "1. FIRST: Call mem_session_summary")
-						then := strings.Index(output, "2. Read the compact context")
+						first := strings.Index(output, "COMPACTION CHECKPOINT: save the compacted summary")
+						then := strings.Index(output, "Then continue; recent context is below")
 						if tc.registered {
 							if first < 0 || then <= first || strings.Index(output, marker) > first {
 								t.Error("confirmed compaction must receive identity before summary, then recover context")
 							}
 						} else {
-							for _, forbidden := range []string{"ACTIVE PROTOCOL", "1. FIRST: Call mem_session_summary", "2. THEN: Call mem_context", "call mem_search", "Call `mem_save`", "Call `mem_session_summary`"} {
+							for _, forbidden := range []string{"ACTIVE PROTOCOL", "1. FIRST: Call mem_session_summary", "COMPACTION CHECKPOINT", "2. THEN: Call mem_context", "call mem_search", "Call `mem_save`", "Call `mem_session_summary`"} {
 								if strings.Contains(output, forbidden) {
 									t.Errorf("unconfirmed compaction instructs tool use: %q", forbidden)
 								}

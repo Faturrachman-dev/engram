@@ -30,6 +30,7 @@ import (
 
 	"github.com/Gentleman-Programming/engram/v3/internal/command"
 	"github.com/Gentleman-Programming/engram/v3/internal/mcp"
+	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 )
 
 var (
@@ -136,7 +137,7 @@ func claudeCodePermissionTools(agentTools map[string]bool) []string {
 }
 
 // codexEngramBlock is retained for non-Windows fallback compatibility tests.
-const codexEngramBlock = "[mcp_servers.engram]\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\"]"
+const codexEngramBlock = "[mcp_servers.engram]\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\", \"--memory-mode=minimal\"]"
 
 // windowsHookCommandMarkerPrefix identifies the first-line command pin consumed
 // by the Windows hook. Its value is JSON so PowerShell can decode it losslessly.
@@ -144,112 +145,26 @@ const windowsHookCommandMarkerPrefix = "# engram-windows-hook-command-v1: "
 
 // codexEngramBlockStr returns the Codex TOML block for the supplied canonical
 // Engram command. installCodex resolves the command before it writes any setup
-// state so Windows cannot persist a PATH-dependent fallback.
+// state so Windows cannot persist a PATH-dependent fallback. Minimal memory
+// mode is written explicitly (PRD §6) so deployment does not depend on an
+// ambient ENGRAM_MEMORY_MODE environment variable.
 func codexEngramBlockStr(command string) string {
-	return "[mcp_servers.engram]\ncommand = " + fmt.Sprintf("%q", command) + "\nargs = [\"mcp\", \"--tools=agent\"]"
+	return "[mcp_servers.engram]\ncommand = " + fmt.Sprintf("%q", command) + "\nargs = [\"mcp\", \"--tools=agent\", \"--memory-mode=minimal\"]"
 }
 
-const memoryProtocolMarkdown = `## Engram Persistent Memory — Protocol
-
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
-
-### WHEN TO SAVE (mandatory — not optional)
-
-Call mem_save IMMEDIATELY after any of these:
-- Bug fix completed
-- Architecture or design decision made
-- Non-obvious discovery about the codebase
-- Configuration change or environment setup
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
-
-Format for mem_save:
-- **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
-- **type**: bugfix | decision | architecture | discovery | pattern | config | preference
-- **scope**: project (default) | personal | global
-- **topic_key** (optional, recommended for evolving decisions): stable key like architecture/auth-model
-- **content**:
-  **What**: One sentence — what was done
-  **Why**: What motivated it (user request, bug, performance, etc.)
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you (omit if none)
-
-### Topic update rules (mandatory)
-
-- Different topics must not overwrite each other (e.g. architecture vs bugfix)
-- Reuse the same topic_key to update an evolving topic instead of creating new observations
-- If unsure about the key, call mem_suggest_topic_key first and then reuse it
-- Use mem_update when you have an exact observation ID to correct
-
-### DELIVERY GUARANTEE
-
-Memory operations are internal bookkeeping, never the user-facing answer. Complete required memory work before composing the completed-task reply; send the complete answer as the final message of the turn with no later tool calls. If memory work fails or needs follow-up, still send the answer.
-
-### WHEN TO SEARCH MEMORY
-
-When the user asks to recall something — any variation of "remember", "recall", "what did we do",
-"how did we solve", "recordar", "acordate", "qué hicimos", or references to past work:
-1. First call mem_context — checks recent session history (fast, cheap)
-2. If not found, call mem_search with relevant keywords (FTS5 full-text search)
-3. If you find a match, use mem_get_observation for full untruncated content
-
-Also search memory PROACTIVELY when:
-- Starting work on something that might have been done before
-- The user mentions a topic you have no context on — check if past sessions covered it
-
-### SESSION CLOSE PROTOCOL
-
-At a genuine session close, compaction, handoff, or major milestone (not after every task or final reply):
-1. Call mem_session_summary with the structure below.
-2. At genuine session close, call mem_session_end with the active session id and an optional summary of work completed.
-
-mem_session_summary structure:
-
-## Goal
-[What we were working on this session]
-
-## Instructions
-[User preferences or constraints discovered — skip if none]
-
-## Discoveries
-- [Technical findings, gotchas, non-obvious learnings]
-
-## Accomplished
-- [Completed items with key details]
-
-## Next Steps
-- [What remains to be done — for the next session]
-
-## Relevant Files
-- path/to/file — [what it does or what changed]
-
-Do not write summaries for routine edits or trivial tasks.
-
-### AFTER COMPACTION
-
-If you see a message about compaction or context reset, or if you see "FIRST ACTION REQUIRED" in your context:
-1. IMMEDIATELY call mem_session_summary with the compacted summary content — this persists what was done before compaction
-2. Read the compact context injected by the hook; call mem_context only if more detail is needed
-3. Continue working
-
-Do not skip step 1. Without it, everything done before compaction is lost from memory.
-`
-
-const geminiSessionCloseInstruction = `
-
-### GEMINI CLI SESSION CLOSE (mandatory)
-
-After mem_session_summary succeeds, call mem_session_end before closing the session.
-Do not call mem_session_end before mem_session_summary.
-`
+// memoryProtocolMarkdown is the agent-facing memory protocol baked into every
+// generated instruction surface. It derives from the single canonical compact
+// policy (internal/memorypolicy) so behavioral rules never drift across agents
+// (PRD R4). Only client-specific frontmatter/wrappers differ per adapter.
+var memoryProtocolMarkdown = memorypolicy.Body()
 
 const codexCompactPromptMarkdown = `You are compacting a coding session that uses Engram persistent memory.
 
-You MUST prepend this exact sentence at the top of the compacted summary:
+Prepend this exact line at the top of the compacted summary:
 
-FIRST ACTION REQUIRED: Call mem_session_summary with the content of this compacted summary before doing anything else, then call mem_context.
+COMPACTION CHECKPOINT: save this compacted summary once with mem_session_summary, then continue. Recent context is already injected.
 
-After that sentence, summarize:
+After that line, summarize:
 - Goal
 - Key technical discoveries and decisions
 - Completed work
@@ -1585,7 +1500,7 @@ func writeGeminiSystemPrompt() error {
 		return fmt.Errorf("create gemini system prompt dir: %w", err)
 	}
 
-	if err := os.WriteFile(systemPath, []byte(memoryProtocolMarkdown+geminiSessionCloseInstruction), 0644); err != nil {
+	if err := os.WriteFile(systemPath, []byte(memorypolicy.GeminiInstructions()), 0644); err != nil {
 		return fmt.Errorf("write gemini system prompt: %w", err)
 	}
 
