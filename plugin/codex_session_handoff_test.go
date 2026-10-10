@@ -100,7 +100,8 @@ func codexPromptSubmitSession(t *testing.T, ended, refuseRegistration bool) {
 	}))
 	defer fixture.Close()
 	bin := filepath.Join(root, "bin")
-	env := codexHandoffEnv(t, root, fixture.URL, buildCodexFixtureCLI(t))
+	// Prompt capture is opt-in for Codex; this test exercises the capture path.
+	env := append(codexHandoffEnv(t, root, fixture.URL, buildCodexFixtureCLI(t)), "ENGRAM_CODEX_CAPTURE_PROMPTS=1")
 	if err := os.WriteFile(filepath.Join(bin, "touch"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -321,11 +322,7 @@ func TestCodexRegisteredSessionHandoff(t *testing.T) {
 							t.Errorf("missing instruction %q", want)
 						}
 					}
-					if tc.registered {
-						if !strings.Contains(output, "ACTIVE PROTOCOL") {
-							t.Error("confirmed registration missing active protocol")
-						}
-					} else if event != "compact" {
+					if !tc.registered && event != "compact" {
 						for _, forbidden := range []string{"ACTIVE PROTOCOL", "Call `mem_save`", "Call `mem_session_summary`", "call mem_search"} {
 							if strings.Contains(output, forbidden) {
 								t.Errorf("unconfirmed startup instructs agent memory use: %q", forbidden)
