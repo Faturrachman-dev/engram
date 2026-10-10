@@ -3834,7 +3834,7 @@ func errorWithMeta(code, msg string, availableProjects []string) *mcp.CallToolRe
 	case "session_already_ended":
 		envelope["hint"] = "Choose a new session ID and retry mem_session_start; ended sessions cannot be reopened."
 	case "session_project_mismatch":
-		envelope["hint"] = "Use a project that matches the existing session, or omit session_id and write to a different project."
+		envelope["hint"] = "The session (passed explicitly, or auto-bound as the active runtime session for this directory when session_id is omitted) is project-owned. Do not drop project and retry: that silently writes to the session project. Ask the user, or save independently with `engram save --project <name>`."
 	case "session_project_ownership_ambiguous":
 		envelope["hint"] = "Use ownership rescue to classify the historical session before writing to a different project."
 	case "project_required":

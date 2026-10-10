@@ -44,13 +44,21 @@ fi
 
 PROJECT=$(resolve_project "$CWD") || PROJECT=""
 
+# A session started in the home directory is a catch-all, not a project: register
+# it as shared so explicit project writes are not rejected as a session mismatch.
+OWNERSHIP="project_owned"
+norm_dir() { (command -v cygpath >/dev/null 2>&1 && cygpath -m "$1" || printf '%s' "$1") | tr '[:upper:]\\' '[:lower:]/' | sed 's#/*$##'; }
+if [ -n "$CWD" ] && [ -n "$HOME" ] && [ "$(norm_dir "$CWD")" = "$(norm_dir "$HOME")" ]; then
+  OWNERSHIP="shared"
+fi
+
 # Create session
 if [ -n "$SESSION_ID" ] && [ -n "$PROJECT" ]; then
   engram_curl -sf "${ENGRAM_URL}/sessions" \
     -X POST \
     -H "Content-Type: application/json" \
-    -d "$(jq -n --arg id "$SESSION_ID" --arg project "$PROJECT" --arg dir "$CWD" \
-      '{id: $id, project: $project, directory: $dir, ownership_mode: "project_owned"}')" \
+    -d "$(jq -n --arg id "$SESSION_ID" --arg project "$PROJECT" --arg dir "$CWD" --arg mode "$OWNERSHIP" \
+      '{id: $id, project: $project, directory: $dir, ownership_mode: $mode}')" \
     > /dev/null
 fi
 
