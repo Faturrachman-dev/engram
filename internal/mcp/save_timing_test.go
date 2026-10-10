@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 	"github.com/Gentleman-Programming/engram/v3/internal/store"
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
 )
@@ -22,7 +23,8 @@ func TestHandleSaveTimingOptIn(t *testing.T) {
 			if err := s.CreateSession("timing-session", "timing-test", ""); err != nil {
 				t.Fatal(err)
 			}
-			h := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+			// Candidate timing only exists when the post-save scan runs (legacy mode).
+			h := handleSave(s, MCPConfig{Mode: memorypolicy.ModeLegacy}, NewSessionActivity(10*time.Minute))
 			call := func(title string) *mcppkg.CallToolResult {
 				t.Helper()
 				r, err := h(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{

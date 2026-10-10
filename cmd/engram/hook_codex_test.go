@@ -190,6 +190,7 @@ func TestCodexResumeLifecycleUsesConfirmedBinding(t *testing.T) {
 			t.Fatalf("%s effective id = %q", phase, id)
 		}
 	}
+	t.Setenv("ENGRAM_CODEX_CAPTURE_PROMPTS", "1") // prompt capture is opt-in in this fork
 	_ = runCodexUserPromptSubmit(input, endpoint.URL, filepath.Join(root, "prompt-state"), time.Now)
 	prompts, err := db.RecentPrompts("resume-project", 10)
 	if err != nil || len(prompts) != 1 || prompts[0].SessionID != "host:resume:2" {

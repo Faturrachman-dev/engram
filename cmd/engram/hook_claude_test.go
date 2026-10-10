@@ -163,7 +163,7 @@ func TestClaudeEndedRegistrationCannotPersistBoundWrite(t *testing.T) {
 	input, _ := json.Marshal(map[string]string{"session_id": host, "cwd": root})
 	cmd := exec.Command("bash", filepath.Join("..", "..", "plugin", "claude-code", "scripts", "session-start.sh"))
 	cmd.Stdin = strings.NewReader(string(input))
-	cmd.Env = append(os.Environ(), "PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"), "HOME="+root, "CLAUDE_CONFIG_DIR="+filepath.Join(root, "claude"), "ENGRAM_DATA_DIR="+filepath.Join(root, "data"), "ENGRAM_URL="+server.URL, "ENGRAM_SOCKET=", "ENGRAM_PROJECT=", "ENGRAM_PORT=")
+	cmd.Env = append(os.Environ(), "PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"), "HOME="+filepath.Join(root, "home"), "CLAUDE_CONFIG_DIR="+filepath.Join(root, "claude"), "ENGRAM_DATA_DIR="+filepath.Join(root, "data"), "ENGRAM_URL="+server.URL, "ENGRAM_SOCKET=", "ENGRAM_PROJECT=", "ENGRAM_PORT=")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("SessionStart: %v: %s", err, out)

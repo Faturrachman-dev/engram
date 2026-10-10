@@ -205,7 +205,6 @@
         "content": {"type":["string"],"additionalProperties":true},
         "find": {"type":["string"],"additionalProperties":true},
         "id": {"type":["number"],"additionalProperties":true},
-        "project": {"type":["string"],"additionalProperties":true},
         "replace": {"type":["string"],"additionalProperties":true},
         "scope": {"type":["string"],"additionalProperties":true},
         "title": {"type":["string"],"additionalProperties":true},

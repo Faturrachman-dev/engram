@@ -61,6 +61,7 @@ func TestNativeHooksSocket(t *testing.T) {
 	})
 	t.Run("prompt", func(t *testing.T) {
 		// Count capture separately so a network-independent first message cannot hide failure.
+		t.Setenv("ENGRAM_CODEX_CAPTURE_PROMPTS", "1") // prompt capture is opt-in in this fork
 		_ = runCodexUserPromptSubmit(input, codexHookURL(), t.TempDir(), time.Now)
 		if captures.Load() != 1 {
 			t.Fatalf("prompt captures = %d", captures.Load())
