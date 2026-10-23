@@ -23,6 +23,8 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 
 ### Memory core
 
+- **feat(provenance):** stamp saves, passive captures, and summaries from host/session metadata; preserve attribution across local export/import/sync. Claude/Codex hooks and Pi/OMP adapters use live host evidence rather than model-authored labels. Adds `POST /sessions/{id}/summary` without ending the session. See [author provenance](docs/author-provenance.md); deployment requires binary and host reloads.
+
 - **feat(mcp):** add an optional validated `project` argument to `mem_get_observation` for response context. Observation lookup remains ID-based and is not filtered by project ownership.
 - **fix(store):** upgrade the embedded SQLite runtime to 3.51.3, which includes SQLite's upstream WAL-reset integrity fix. Engram's WAL and network-filesystem policies are unchanged.
 

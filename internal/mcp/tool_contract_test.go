@@ -483,12 +483,33 @@ func TestMCPToolContractV1(t *testing.T) {
 	if err := removeApprovedCurrentProjectDelta(live); err != nil {
 		t.Fatal(err)
 	}
+	if err := removeApprovedAuthorDelta(live); err != nil {
+		t.Fatal(err)
+	}
 	if err := verifyMCPToolContract(fixture, live, before); err != nil {
 		t.Fatal(err)
 	}
 	if after, err := os.ReadFile("testdata/tool-contract-v1.json"); err != nil || string(before) != string(after) {
 		t.Fatalf("fixture changed: %v", err)
 	}
+}
+
+// These optional strings are host-injected metadata, not new model requirements.
+// Keep the v1 baseline immutable and permit only this approved schema delta.
+func removeApprovedAuthorDelta(live map[string]mcpToolSchema) error {
+	for _, name := range []string{"mem_session_start", "mem_session_summary", "mem_capture_passive"} {
+		tool, ok := live[name]
+		if !ok {
+			return fmt.Errorf("%s missing", name)
+		}
+		field, ok := tool.Properties["author"]
+		if !ok || !slices.Equal(field.Types, []string{"string"}) || len(field.Properties) != 0 || len(field.Required) != 0 || field.Items != nil || len(field.Enum) != 0 || !field.Additional || slices.Contains(tool.Required, "author") {
+			return fmt.Errorf("%s author must retain the approved optional string schema", name)
+		}
+		delete(tool.Properties, "author")
+		live[name] = tool
+	}
+	return nil
 }
 
 func removeApprovedCurrentProjectDelta(live map[string]mcpToolSchema) error {

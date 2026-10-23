@@ -130,6 +130,7 @@ var (
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type Session struct {
+	Author                string  `json:"author,omitempty"`
 	ID                    string  `json:"id"`
 	Project               string  `json:"project"`
 	OwnershipMode         string  `json:"ownership_mode,omitempty"`
@@ -621,6 +622,7 @@ type EnrolledProject struct {
 }
 
 type syncSessionPayload struct {
+	Author        string  `json:"author,omitempty"`
 	ID            string  `json:"id"`
 	Project       string  `json:"project"`
 	OwnershipMode string  `json:"ownership_mode,omitempty"`
@@ -634,6 +636,7 @@ type syncSessionPayload struct {
 }
 
 type syncObservationPayload struct {
+	Author         *string `json:"author,omitempty"`
 	SyncID         string  `json:"sync_id"`
 	SessionID      string  `json:"session_id"`
 	Type           string  `json:"type"`
@@ -1542,6 +1545,9 @@ func (s *Store) migrate() error {
 	}
 
 	if err := s.migrateLegacyObservationsTable(); err != nil {
+		return err
+	}
+	if err := s.addColumnIfNotExists("sessions", "author", "TEXT"); err != nil {
 		return err
 	}
 	if err := s.addColumnIfNotExists("sessions", "ownership_mode", "TEXT"); err != nil {
@@ -3225,14 +3231,14 @@ func (s *Store) LocalSessionProvenance(id string) (owner string, eligible bool, 
 	return owner, creationProject.Valid && creationProject.String != "" && owner == creationProject.String, nil
 }
 
-func (s *Store) CreateSession(id, project, directory string) error {
-	return s.CreateSessionWithOwnershipMode(id, project, directory, SessionOwnershipShared)
+func (s *Store) CreateSession(id, project, directory string, author ...string) error {
+	return s.CreateSessionWithOwnershipMode(id, project, directory, SessionOwnershipShared, author...)
 }
 
 // CreateSessionWithOwnershipMode creates a session with an explicit persisted
 // ownership policy. CreateSession remains the compatibility wrapper for shared
 // runtime sessions.
-func (s *Store) CreateSessionWithOwnershipMode(id, project, directory, mode string) error {
+func (s *Store) CreateSessionWithOwnershipMode(id, project, directory, mode string, author ...string) error {
 	if err := validateSessionID(id); err != nil {
 		return err
 	}
@@ -3261,16 +3267,20 @@ func (s *Store) CreateSessionWithOwnershipMode(id, project, directory, mode stri
 		if err := s.createSessionTx(tx, id, project, directory, mode); err != nil {
 			return err
 		}
+		if _, err := s.setSessionAuthorTx(tx, id, author); err != nil {
+			return err
+		}
 		var persisted Session
 		// sessions.project is read through ifnull() because a database upgraded from
 		// the schema where the column was nullable still carries rows that identify no
 		// project, and no migration rewrites them.
-		if err := tx.QueryRow(`SELECT id, ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary FROM sessions WHERE id = ?`, id).Scan(
-			&persisted.ID, &persisted.Project, &persisted.OwnershipMode, &persisted.Directory, &persisted.StartedAt, &persisted.EndedAt, &persisted.Summary,
+		if err := tx.QueryRow(`SELECT id, ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, ifnull(author, '') FROM sessions WHERE id = ?`, id).Scan(
+			&persisted.ID, &persisted.Project, &persisted.OwnershipMode, &persisted.Directory, &persisted.StartedAt, &persisted.EndedAt, &persisted.Summary, &persisted.Author,
 		); err != nil {
 			return err
 		}
 		return s.enqueueSyncMutationTx(tx, SyncEntitySession, persisted.ID, SyncOpUpsert, syncSessionPayload{
+			Author:        persisted.Author,
 			ID:            persisted.ID,
 			Project:       persisted.Project,
 			OwnershipMode: persisted.OwnershipMode,
@@ -3287,21 +3297,21 @@ func (s *Store) CreateSessionWithOwnershipMode(id, project, directory, mode stri
 const runtimeSessionLeaseDuration = "+30 minutes"
 
 // StartSession registers a shared runtime session or renews its local lease.
-func (s *Store) StartSession(id, project, directory string) error {
-	return s.StartSessionWithOwnershipMode(id, project, directory, SessionOwnershipShared)
+func (s *Store) StartSession(id, project, directory string, author ...string) error {
+	return s.StartSessionWithOwnershipMode(id, project, directory, SessionOwnershipShared, author...)
 }
 
 // StartSessionWithOwnershipMode registers a runtime session or renews its local
 // lease. It preserves the existing session identity and refuses to reopen an
 // ended session; EndSession remains terminal truth.
-func (s *Store) StartSessionWithOwnershipMode(id, project, directory, mode string) error {
-	return s.startSessionRegistration(id, project, directory, mode, false, nil, false, nil)
+func (s *Store) StartSessionWithOwnershipMode(id, project, directory, mode string, author ...string) error {
+	return s.startSessionRegistration(id, project, directory, mode, false, nil, false, nil, author...)
 }
 
 // StartSessionWithOwnershipModeTimed records database-stage timings without
 // changing session-registration behavior.
-func (s *Store) StartSessionWithOwnershipModeTimed(id, project, directory, mode string, timings *WriteTimings) error {
-	return s.startSessionRegistration(id, project, directory, mode, false, nil, false, timings)
+func (s *Store) StartSessionWithOwnershipModeTimed(id, project, directory, mode string, timings *WriteTimings, author ...string) error {
+	return s.startSessionRegistration(id, project, directory, mode, false, nil, false, timings, author...)
 }
 
 // ResumeSessionWithOwnershipMode atomically selects and registers a live runtime
@@ -3312,9 +3322,9 @@ func (s *Store) ResumeSessionWithOwnershipMode(id, project, directory, mode stri
 
 // ResumeSessionWithOwnershipModeTimed records database-stage timings without
 // changing runtime-session continuation selection.
-func (s *Store) ResumeSessionWithOwnershipModeTimed(id, project, directory, mode string, timings *WriteTimings) (string, error) {
+func (s *Store) ResumeSessionWithOwnershipModeTimed(id, project, directory, mode string, timings *WriteTimings, author ...string) (string, error) {
 	effective := id
-	err := s.startSessionRegistration(id, project, directory, mode, true, &effective, false, timings)
+	err := s.startSessionRegistration(id, project, directory, mode, true, &effective, false, timings, author...)
 	if err != nil {
 		return "", err
 	}
@@ -3336,9 +3346,9 @@ func (s *Store) RegisterIsolatedSession(id, project string, resume bool) (string
 
 // RegisterIsolatedSessionTimed records database-stage timings without changing
 // isolated-session validation or persistence.
-func (s *Store) RegisterIsolatedSessionTimed(id, project string, resume bool, timings *WriteTimings) (string, error) {
+func (s *Store) RegisterIsolatedSessionTimed(id, project string, resume bool, timings *WriteTimings, author ...string) (string, error) {
 	effective := id
-	if err := s.startSessionRegistration(id, project, "", SessionOwnershipProjectOwned, resume, &effective, true, timings); err != nil {
+	if err := s.startSessionRegistration(id, project, "", SessionOwnershipProjectOwned, resume, &effective, true, timings, author...); err != nil {
 		return "", err
 	}
 	return effective, nil
@@ -3403,7 +3413,7 @@ func continuationSessionTx(tx *sql.Tx, root string) (string, error) {
 	return prefix + max.Add(max, big.NewInt(1)).String(), nil
 }
 
-func (s *Store) startSessionRegistration(id, project, directory, mode string, resume bool, effective *string, isolated bool, timings *WriteTimings) error {
+func (s *Store) startSessionRegistration(id, project, directory, mode string, resume bool, effective *string, isolated bool, timings *WriteTimings, author ...string) error {
 	if err := validateSessionID(id); err != nil {
 		return err
 	}
@@ -3518,13 +3528,13 @@ func (s *Store) startSessionRegistration(id, project, directory, mode string, re
 					return fmt.Errorf("ended legacy session ownership claim lost for %q", id)
 				}
 				var persisted Session
-				if err := tx.QueryRow(`SELECT id, ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary FROM sessions WHERE id = ?`, id).Scan(
-					&persisted.ID, &persisted.Project, &persisted.OwnershipMode, &persisted.Directory, &persisted.StartedAt, &persisted.EndedAt, &persisted.Summary,
+				if err := tx.QueryRow(`SELECT id, ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, ifnull(author, '') FROM sessions WHERE id = ?`, id).Scan(
+					&persisted.ID, &persisted.Project, &persisted.OwnershipMode, &persisted.Directory, &persisted.StartedAt, &persisted.EndedAt, &persisted.Summary, &persisted.Author,
 				); err != nil {
 					return err
 				}
 				if err := s.enqueueSyncMutationTx(tx, SyncEntitySession, id, SyncOpUpsert, syncSessionPayload{
-					ID: persisted.ID, Project: persisted.Project, OwnershipMode: persisted.OwnershipMode,
+					Author: persisted.Author, ID: persisted.ID, Project: persisted.Project, OwnershipMode: persisted.OwnershipMode,
 					Directory: persisted.Directory, StartedAt: persisted.StartedAt,
 					EndedAt: persisted.EndedAt, Summary: persisted.Summary,
 				}); err != nil {
@@ -3550,19 +3560,24 @@ func (s *Store) startSessionRegistration(id, project, directory, mode string, re
 		if err := s.startSessionTx(tx, id, project, directory, mode); err != nil {
 			return err
 		}
-		if !identityRepaired {
+		authorChanged, err := s.setSessionAuthorTx(tx, id, author)
+		if err != nil {
+			return err
+		}
+		if !identityRepaired && !authorChanged {
 			return nil
 		}
 		var persisted Session
 		// sessions.project is read through ifnull() because a database upgraded from
 		// the schema where the column was nullable still carries rows that identify no
 		// project, and no migration rewrites them.
-		if err := tx.QueryRow(`SELECT id, ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary FROM sessions WHERE id = ?`, id).Scan(
-			&persisted.ID, &persisted.Project, &persisted.OwnershipMode, &persisted.Directory, &persisted.StartedAt, &persisted.EndedAt, &persisted.Summary,
+		if err := tx.QueryRow(`SELECT id, ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, ifnull(author, '') FROM sessions WHERE id = ?`, id).Scan(
+			&persisted.ID, &persisted.Project, &persisted.OwnershipMode, &persisted.Directory, &persisted.StartedAt, &persisted.EndedAt, &persisted.Summary, &persisted.Author,
 		); err != nil {
 			return err
 		}
 		return s.enqueueSyncMutationTx(tx, SyncEntitySession, persisted.ID, SyncOpUpsert, syncSessionPayload{
+			Author:        persisted.Author,
 			ID:            persisted.ID,
 			Project:       persisted.Project,
 			OwnershipMode: persisted.OwnershipMode,
@@ -3626,12 +3641,19 @@ func runtimeSessionTx(tx *sql.Tx, root, project, directory, mode string) (string
 
 // ResolveRuntimeSessionWithOwnershipMode reads the authoritative live binding;
 // unlike resume registration it cannot create or advance a continuation.
-func (s *Store) ResolveRuntimeSessionWithOwnershipMode(root, project, directory, mode string) (string, error) {
+func (s *Store) ResolveRuntimeSessionWithOwnershipMode(root, project, directory, mode string, author ...string) (string, error) {
 	var id string
 	err := s.withTx(func(tx *sql.Tx) error {
 		var err error
 		id, err = runtimeSessionTx(tx, root, project, directory, mode)
-		return err
+		if err != nil {
+			return err
+		}
+		changed, err := s.setSessionAuthorTx(tx, id, author)
+		if err != nil || !changed {
+			return err
+		}
+		return s.enqueueSessionAuthorTx(tx, id)
 	})
 	return id, err
 }
@@ -3676,19 +3698,20 @@ func (s *Store) endSessionOperation(id, summary string) func(*sql.Tx) error {
 		}
 
 		var startedAt, endedAt string
-		var project, directory, mode string
+		var project, directory, mode, author string
 		var storedSummary *string
 		// sessions.project is read through ifnull() because a database upgraded from
 		// the schema where the column was nullable still carries rows that identify no
 		// project, and no migration rewrites them.
 		if err := tx.QueryRow(
-			`SELECT ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary FROM sessions WHERE id = ?`,
+			`SELECT ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, ifnull(author, '') FROM sessions WHERE id = ?`,
 			id,
-		).Scan(&project, &mode, &directory, &startedAt, &endedAt, &storedSummary); err != nil {
+		).Scan(&project, &mode, &directory, &startedAt, &endedAt, &storedSummary, &author); err != nil {
 			return err
 		}
 
 		return s.enqueueSyncMutationTx(tx, SyncEntitySession, id, SyncOpUpsert, syncSessionPayload{
+			Author:        author,
 			ID:            id,
 			Project:       project,
 			OwnershipMode: mode,
@@ -3702,14 +3725,14 @@ func (s *Store) endSessionOperation(id, summary string) func(*sql.Tx) error {
 
 func (s *Store) GetSession(id string) (*Session, error) {
 	row := s.db.QueryRow(
-		`SELECT id, project, ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, runtime_lease_expires_at FROM sessions WHERE id = ?`, id,
+		`SELECT id, project, ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, runtime_lease_expires_at, ifnull(author, '') FROM sessions WHERE id = ?`, id,
 	)
 	var sess Session
 	// A database upgraded from the schema where sessions.project was nullable
 	// still carries NULL ownership, so the column must be read as nullable or
 	// every caller that inspects a legacy session dies on an opaque scan error.
 	var project sql.NullString
-	if err := row.Scan(&sess.ID, &project, &sess.OwnershipMode, &sess.Directory, &sess.StartedAt, &sess.EndedAt, &sess.Summary, &sess.RuntimeLeaseExpiresAt); err != nil {
+	if err := row.Scan(&sess.ID, &project, &sess.OwnershipMode, &sess.Directory, &sess.StartedAt, &sess.EndedAt, &sess.Summary, &sess.RuntimeLeaseExpiresAt, &sess.Author); err != nil {
 		return nil, err
 	}
 	sess.Project = project.String
@@ -4068,6 +4091,7 @@ func (s *Store) AddObservation(p AddObservationParams) (int64, error) {
 // AddObservationWithResult persists an observation or returns an exact replay
 // outcome from the operation ledger in the same transaction.
 func (s *Store) AddObservationWithResult(p AddObservationParams) (AddObservationResult, error) {
+	p.Author = strings.TrimSpace(p.Author)
 	// Normalize project name (lowercase + trim) before any persistence
 	p.Project, _ = NormalizeProject(p.Project)
 
@@ -4135,6 +4159,11 @@ func (s *Store) AddObservationWithResult(p AddObservationParams) (AddObservation
 			}
 			p.Project = resolved
 		}
+		if strings.TrimSpace(p.Author) == "" {
+			if err := tx.QueryRow(`SELECT ifnull(author, '') FROM sessions WHERE id = ?`, p.SessionID).Scan(&p.Author); err != nil {
+				return err
+			}
+		}
 		var obs *Observation
 		if topicKey != "" {
 			var existingID int64
@@ -4165,6 +4194,7 @@ func (s *Store) AddObservationWithResult(p AddObservationParams) (AddObservation
 					     title = ?,
 					     content = ?,
 					     tool_name = ?,
+					     author = COALESCE(?, author),
 					     topic_key = ?,
 					     normalized_hash = ?,
 					     revision_count = revision_count + 1,
@@ -4176,6 +4206,7 @@ func (s *Store) AddObservationWithResult(p AddObservationParams) (AddObservation
 					title,
 					content,
 					nullableString(p.ToolName),
+					nullableString(p.Author),
 					nullableString(topicKey),
 					normHash,
 					existingID,
@@ -6549,7 +6580,7 @@ func (s *Store) exportWithProjectScope(project string) (_ *ExportData, err error
 		ExportedAt: Now(),
 	}
 
-	sessionQuery := "SELECT id, ifnull(project, ''), directory, ifnull(ownership_mode, ''), started_at, ended_at, summary FROM sessions"
+	sessionQuery := "SELECT id, ifnull(project, ''), directory, ifnull(ownership_mode, ''), started_at, ended_at, summary, ifnull(author, '') FROM sessions"
 	sessionArgs := []any{}
 	if project != "" {
 		sessionQuery += ` WHERE id IN (
@@ -6574,7 +6605,7 @@ func (s *Store) exportWithProjectScope(project string) (_ *ExportData, err error
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var sess Session
-		if err := rows.Scan(&sess.ID, &sess.Project, &sess.Directory, &sess.OwnershipMode, &sess.StartedAt, &sess.EndedAt, &sess.Summary); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.Project, &sess.Directory, &sess.OwnershipMode, &sess.StartedAt, &sess.EndedAt, &sess.Summary, &sess.Author); err != nil {
 			return nil, err
 		}
 		data.Sessions = append(data.Sessions, sess)
@@ -6744,9 +6775,9 @@ func (s *Store) Import(data *ExportData) (*ImportResult, error) {
 	// Import sessions (skip duplicates)
 	for _, sess := range data.Sessions {
 		res, err := s.execHook(tx,
-			`INSERT OR IGNORE INTO sessions (id, project, ownership_mode, directory, started_at, ended_at, summary)
-			 VALUES (?, ?, COALESCE(?, 'shared'), ?, ?, ?, ?)`,
-			sess.ID, sess.Project, nullableOwnershipMode(sess.OwnershipMode), sess.Directory, sess.StartedAt, sess.EndedAt, sess.Summary,
+			`INSERT OR IGNORE INTO sessions (id, project, ownership_mode, directory, started_at, ended_at, summary, author)
+			 VALUES (?, ?, COALESCE(?, 'shared'), ?, ?, ?, ?, ?)`,
+			sess.ID, sess.Project, nullableOwnershipMode(sess.OwnershipMode), sess.Directory, sess.StartedAt, sess.EndedAt, sess.Summary, sess.Author,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("import session %s: %w", sess.ID, err)
@@ -10347,8 +10378,8 @@ func (s *Store) enqueueRescuedProjectMutationsTx(tx *sql.Tx, target string, sess
 	journaled := false
 	for _, id := range sessionIDs {
 		var payload syncSessionPayload
-		err := tx.QueryRow(`SELECT id, ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary FROM sessions WHERE id = ?`, id).
-			Scan(&payload.ID, &payload.Project, &payload.OwnershipMode, &payload.Directory, &payload.StartedAt, &payload.EndedAt, &payload.Summary)
+		err := tx.QueryRow(`SELECT id, ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, ifnull(author, '') FROM sessions WHERE id = ?`, id).
+			Scan(&payload.ID, &payload.Project, &payload.OwnershipMode, &payload.Directory, &payload.StartedAt, &payload.EndedAt, &payload.Summary, &payload.Author)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -10716,7 +10747,7 @@ func (s *Store) backfillSessionSyncMutationsTx(tx *sql.Tx, project string, sourc
 	// backfill transaction. The predicate must stay identical to the COUNT in
 	// projectNeedsBackfill and to isBlankSessionID.
 	rows, err := s.queryItHook(tx, `
-		SELECT id, project, ifnull(ownership_mode, ''), directory, started_at, ended_at, summary
+		SELECT id, project, ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, ifnull(author, '')
 		FROM sessions
 		WHERE project = ?
 		  AND `+sqlSessionIDNotBlank("id")+`
@@ -10743,7 +10774,7 @@ func (s *Store) backfillSessionSyncMutationsTx(tx *sql.Tx, project string, sourc
 	var pending []syncSessionPayload
 	for rows.Next() {
 		var payload syncSessionPayload
-		if err := rows.Scan(&payload.ID, &payload.Project, &payload.OwnershipMode, &payload.Directory, &payload.StartedAt, &payload.EndedAt, &payload.Summary); err != nil {
+		if err := rows.Scan(&payload.ID, &payload.Project, &payload.OwnershipMode, &payload.Directory, &payload.StartedAt, &payload.EndedAt, &payload.Summary, &payload.Author); err != nil {
 			return closeRowsWithError(rows, err)
 		}
 		pending = append(pending, payload)
@@ -11447,8 +11478,8 @@ func (s *Store) adoptSessionOwnershipTx(tx *sql.Tx, sessionID, project string) e
 	}
 	var payload syncSessionPayload
 	err = tx.QueryRow(
-		`SELECT id, project, ifnull(ownership_mode, ''), directory, started_at, ended_at, summary FROM sessions WHERE id = ?`, sessionID,
-	).Scan(&payload.ID, &payload.Project, &payload.OwnershipMode, &payload.Directory, &payload.StartedAt, &payload.EndedAt, &payload.Summary)
+		`SELECT id, project, ifnull(ownership_mode, ''), directory, started_at, ended_at, summary, ifnull(author, '') FROM sessions WHERE id = ?`, sessionID,
+	).Scan(&payload.ID, &payload.Project, &payload.OwnershipMode, &payload.Directory, &payload.StartedAt, &payload.EndedAt, &payload.Summary, &payload.Author)
 	if err != nil {
 		return err
 	}
@@ -12257,6 +12288,7 @@ func observationPayloadFromObservation(obs *Observation) syncObservationPayload 
 		reviewAfter, _ = json.Marshal(obs.ReviewAfter)
 	}
 	return syncObservationPayload{
+		Author:         obs.Author,
 		SyncID:         obs.SyncID,
 		SessionID:      obs.SessionID,
 		Type:           obs.Type,
@@ -12292,8 +12324,8 @@ func (s *Store) applySessionPayloadTx(tx *sql.Tx, payload syncSessionPayload) er
 		return fmt.Errorf("%w %q", ErrInvalidSessionOwnershipMode, payload.OwnershipMode)
 	}
 	_, err := s.execHook(tx,
-		`INSERT INTO sessions (id, project, ownership_mode, directory, started_at, ended_at, summary)
-		 VALUES (?, ?, COALESCE(?, 'shared'), ?, COALESCE(NULLIF(?, ''), datetime('now')), ?, ?)
+		`INSERT INTO sessions (id, project, ownership_mode, directory, started_at, ended_at, summary, author)
+		 VALUES (?, ?, COALESCE(?, 'shared'), ?, COALESCE(NULLIF(?, ''), datetime('now')), ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   project = CASE WHEN sessions.ownership_mode = 'project_owned' THEN sessions.project ELSE excluded.project END,
 		   ownership_mode = CASE
@@ -12302,8 +12334,9 @@ func (s *Store) applySessionPayloadTx(tx *sql.Tx, payload syncSessionPayload) er
 		   directory = CASE WHEN trim(sessions.directory, ?) = '' THEN excluded.directory ELSE sessions.directory END,
 		   started_at = COALESCE(NULLIF(excluded.started_at, ''), sessions.started_at),
 		   ended_at = COALESCE(excluded.ended_at, sessions.ended_at),
-		   summary = COALESCE(excluded.summary, sessions.summary)`,
-		payload.ID, payload.Project, nullableOwnershipMode(payload.OwnershipMode), payload.Directory, strings.TrimSpace(payload.StartedAt), payload.EndedAt, payload.Summary, sqlWhitespaceTrimSet,
+		   summary = COALESCE(excluded.summary, sessions.summary),
+		   author = COALESCE(NULLIF(excluded.author, ''), sessions.author)`,
+		payload.ID, payload.Project, nullableOwnershipMode(payload.OwnershipMode), payload.Directory, strings.TrimSpace(payload.StartedAt), payload.EndedAt, payload.Summary, payload.Author, sqlWhitespaceTrimSet,
 	)
 	if err != nil {
 		return err
@@ -12439,8 +12472,8 @@ func (s *Store) applyObservationUpsertTx(tx *sql.Tx, payload syncObservationPayl
 			}
 		}
 		_, err = s.execHook(tx,
-			`INSERT INTO observations (sync_id, session_id, type, title, content, tool_name, project, scope, topic_key, normalized_hash, revision_count, duplicate_count, last_seen_at, review_after, created_at, updated_at, deleted_at)
-			 VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+			`INSERT INTO observations (sync_id, session_id, type, title, content, tool_name, project, scope, topic_key, normalized_hash, revision_count, duplicate_count, last_seen_at, review_after, created_at, updated_at, deleted_at, author)
+			 VALUES (?, ?, ?, ?, ?, ?, CAST(? AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
 			payload.SyncID,
 			payload.SessionID,
 			payload.Type,
@@ -12457,6 +12490,7 @@ func (s *Store) applyObservationUpsertTx(tx *sql.Tx, payload syncObservationPayl
 			reviewAfter,
 			createdAt,
 			updatedAt,
+			payload.Author,
 		)
 		if err != nil {
 			return err
@@ -12488,7 +12522,7 @@ func (s *Store) applyObservationUpsertTx(tx *sql.Tx, payload syncObservationPayl
 
 	_, err = s.execHook(tx,
 		`UPDATE observations
-		 SET session_id = ?, type = ?, title = ?, content = ?, tool_name = ?, project = CAST(? AS TEXT), scope = ?, topic_key = ?, normalized_hash = ?, revision_count = ?, duplicate_count = ?, last_seen_at = ?, review_after = ?, created_at = ?, updated_at = ?, deleted_at = NULL
+		 SET session_id = ?, type = ?, title = ?, content = ?, tool_name = ?, project = CAST(? AS TEXT), scope = ?, topic_key = ?, normalized_hash = ?, revision_count = ?, duplicate_count = ?, last_seen_at = ?, review_after = ?, created_at = ?, updated_at = ?, deleted_at = NULL, author = COALESCE(?, author)
 		 WHERE id = ?`,
 		payload.SessionID,
 		payload.Type,
@@ -12505,6 +12539,7 @@ func (s *Store) applyObservationUpsertTx(tx *sql.Tx, payload syncObservationPayl
 		reviewAfter,
 		createdAt,
 		updatedAt,
+		payload.Author,
 		existing.ID,
 	)
 	if err != nil {
@@ -13282,6 +13317,7 @@ func sanitizeFTS(query string) string {
 
 // PassiveCaptureParams holds the input for passive memory capture.
 type PassiveCaptureParams struct {
+	Author    string        `json:"author,omitempty"`
 	SessionID string        `json:"session_id"`
 	Content   string        `json:"content"`
 	Project   string        `json:"project,omitempty"`
@@ -13414,6 +13450,7 @@ func (s *Store) PassiveCapture(p PassiveCaptureParams) (*PassiveCaptureResult, e
 			Project:   p.Project,
 			Scope:     "project",
 			ToolName:  p.Source,
+			Author:    p.Author,
 			Timings:   p.Timings,
 		})
 		if err != nil {

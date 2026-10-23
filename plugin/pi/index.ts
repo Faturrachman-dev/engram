@@ -17,6 +17,17 @@ import { ArchiveOutcome, buildRecoveryNotice, extractCompactedSummary } from "./
 import { compactResultStatus, humanToolName, renderCallText, renderResultText } from "./memory-tool-chrome.js";
 import { redactPrivateTags, redactUrlPath, redactValue } from "./private-redaction.js";
 
+
+// Host context is authoritative; do not accept model-supplied author arguments.
+function runtimeAuthor(ctx?: SessionContext): string | undefined {
+  const active = (ctx as { model?: { provider?: string; id?: string; name?: string } } | undefined)?.model;
+  const model = active?.id?.trim() || active?.name?.trim();
+  const provider = active?.provider?.trim();
+  const harness = process.env.ENGRAM_HARNESS?.trim() || "pi";
+  if (model) return `${harness}/${provider && !model.startsWith(`${provider}/`) ? `${provider}/` : ""}${model}`;
+  return process.env.ENGRAM_AUTHOR?.trim() || undefined;
+}
+
 function optionalEnvironmentValue(value: string | undefined): string | undefined {
   return value?.trim() ? value : undefined;
 }
@@ -211,6 +222,7 @@ function engramFetchPolicy(path: string, method: string): EngramFetchPolicy {
 }
 
 interface SessionBody {
+  author?: string;
   id: string;
   project: string;
   directory: string;
@@ -224,6 +236,7 @@ interface PromptBody {
 }
 
 interface PassiveCaptureBody {
+  author?: string;
   session_id: string;
   content: string;
   project: string;
@@ -1337,7 +1350,7 @@ async function registerEffectiveSession(ctx: SessionContext, sessionProject: str
         let acknowledgement: { id?: unknown; status?: unknown } | null;
         let health: unknown;
         let resumeSupport: boolean | undefined;
-        const body = { id, project: sessionProject, directory, ownership_mode: "project_owned", resume };
+        const body = { id, project: sessionProject, directory, ownership_mode: "project_owned", resume, author: runtimeAuthor(ctx) };
         const validateCapability = resume ? async () => {
           // Missing/unreadable health is not support evidence, but fresh registration
           // without resume remains safe. Registration itself retains transport errors.
@@ -1472,7 +1485,7 @@ async function registerSatelliteSession(ctx: SessionContext, targetProject: stri
       try {
         // Every write renews the lease; core validates isolation before selecting/renewing a continuation.
         acknowledgement = await fetch("/sessions", { method: "POST", beforeDispatch: validateCapability, body: {
-          id: rootID, project: targetProject, ownership_mode: "project_owned", resume: true, isolated: true,
+          id: rootID, project: targetProject, ownership_mode: "project_owned", resume: true, isolated: true, author: runtimeAuthor(ctx),
         } });
       } catch (error) {
         throw sessionProjectConflictFromResponse(error, rootID, targetProject, rootID) || error;
@@ -1525,7 +1538,7 @@ async function ensureSession(sessionId: string, sessionProject = project, fetch:
   if (existingRegistration) { await existingRegistration; return; }
 
   const registration = (async () => {
-    const body: SessionBody = { id: sessionId, project: sessionProject, directory, ownership_mode: "project_owned" };
+    const body: SessionBody = { id: sessionId, project: sessionProject, directory, ownership_mode: "project_owned", author: process.env.ENGRAM_AUTHOR?.trim() || undefined };
     let acknowledgement: unknown;
     try {
       acknowledgement = await fetch("/sessions", { method: "POST", body });
@@ -1919,6 +1932,7 @@ async function archiveCompactionSummary(sessionId: string, summary: string, runt
         project,
         scope: "project",
         topic_key: "session/compaction-recovery",
+        author: runtimeAuthor(ctx),
       },
     });
     return result.transportFailure?.outcome === "unknown" ? ArchiveOutcome.Unknown : ArchiveOutcome.Confirmed;
@@ -2032,11 +2046,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       : registerEffectiveSession(ctx, sessionProject, appendEntry, fetch);
   };
 
-  // Provenance: who authored this memory, as "pi/<model>". Falls back to
-  // ENGRAM_AUTHOR when the active model is not exposed on the context.
-  const activeModel = (ctx as { model?: { id?: string; name?: string } }).model;
-  const modelId = activeModel?.id || activeModel?.name;
-  const author = modelId ? `pi/${modelId}` : (process.env.ENGRAM_AUTHOR?.trim() || undefined);
+  const author = runtimeAuthor(ctx);
 
   switch (toolName) {
     case "mem_search":
@@ -2138,7 +2148,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       requireResolvedProject();
       return fetch("/sessions", {
         method: "POST",
-        body: { id: params.id, project, directory: params.directory || directory || ctx.cwd },
+        body: { id: params.id, project, directory: params.directory || directory || ctx.cwd, author },
       });
     case "mem_session_end": {
       if (typeof params.id !== "string" || !params.id || params.id !== sessionId) {
@@ -2231,7 +2241,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       const passiveSessionId = await registeredSessionForWrite(project);
       if (writeState) assertOpen(writeState, writeEpoch!);
       const body = {
-        session_id: passiveSessionId, content: params.content, project, source: params.source || "pi-tool",
+        session_id: passiveSessionId, content: params.content, project, source: params.source || "pi-tool", author,
       };
       if (writeState) assertOpen(writeState, writeEpoch!);
       return fetch("/observations/passive", { method: "POST", body });
@@ -2727,6 +2737,7 @@ export default function registerEngram(pi: ExtensionAPI) {
       content: stripPrivateTags(content),
       project,
       source: toolName,
+      author: runtimeAuthor(ctx),
     };
     if (state && (state.closing || state.epoch !== epoch)) return;
     await bestEffortEngramFetch("/observations/passive", { method: "POST", body }, ctx);

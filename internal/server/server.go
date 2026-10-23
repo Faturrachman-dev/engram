@@ -27,6 +27,7 @@ import (
 
 	"github.com/Gentleman-Programming/engram/v3/internal/diagnostic"
 	projectpkg "github.com/Gentleman-Programming/engram/v3/internal/project"
+	"github.com/Gentleman-Programming/engram/v3/internal/provenance"
 	"github.com/Gentleman-Programming/engram/v3/internal/store"
 )
 
@@ -514,6 +515,7 @@ func (s *Server) routes() {
 
 	// Sessions
 	s.mux.HandleFunc("POST /sessions", s.handleCreateSession)
+	s.mux.HandleFunc("POST /sessions/{id}/summary", s.handleSessionSummary)
 	s.mux.HandleFunc("POST /sessions/{id}/end", s.handleEndSession)
 	s.mux.HandleFunc("GET /sessions/recent", s.handleRecentSessions)
 	s.mux.HandleFunc("GET /sessions/{id}", s.handleGetSession)
@@ -619,6 +621,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Project       string `json:"project"`
 		Directory     string `json:"directory"`
 		OwnershipMode string `json:"ownership_mode"`
+		Author        string `json:"author"`
 		Resume        bool   `json:"resume"`
 		Isolated      bool   `json:"isolated"`
 	}
@@ -643,11 +646,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	timings := requestWriteTimings(r)
 	var err error
 	if body.Isolated {
-		effectiveID, err = s.store.RegisterIsolatedSessionTimed(body.ID, body.Project, body.Resume, timings)
+		effectiveID, err = s.store.RegisterIsolatedSessionTimed(body.ID, body.Project, body.Resume, timings, s.resolveAuthor(body.Author, body.ID))
 	} else if body.Resume {
-		effectiveID, err = s.store.ResumeSessionWithOwnershipModeTimed(body.ID, body.Project, projectpkg.RuntimeWorktreeDirectory(body.Directory), mode, timings)
+		effectiveID, err = s.store.ResumeSessionWithOwnershipModeTimed(body.ID, body.Project, projectpkg.RuntimeWorktreeDirectory(body.Directory), mode, timings, s.resolveAuthor(body.Author, body.ID))
 	} else {
-		err = s.store.StartSessionWithOwnershipModeTimed(body.ID, body.Project, projectpkg.RuntimeWorktreeDirectory(body.Directory), mode, timings)
+		err = s.store.StartSessionWithOwnershipModeTimed(body.ID, body.Project, projectpkg.RuntimeWorktreeDirectory(body.Directory), mode, timings, s.resolveAuthor(body.Author, body.ID))
 	}
 	if err != nil {
 		var conflict *store.SessionProjectConflictError
@@ -797,6 +800,7 @@ func (s *Server) handleAddObservation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body.Author = s.resolveAuthor(body.Author, body.SessionID)
 	body.Timings = requestWriteTimings(r)
 	result, err := s.store.AddObservationWithResult(body.AddObservationParams)
 	if err != nil {
@@ -844,6 +848,7 @@ func (s *Server) handlePassiveCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body.Author = s.resolveAuthor(body.Author, body.SessionID)
 	body.Timings = requestWriteTimings(r)
 	result, err := s.store.PassiveCapture(body)
 	if err != nil {
@@ -2397,4 +2402,12 @@ func queryBool(r *http.Request, key string, defaultVal bool) bool {
 		return defaultVal
 	}
 	return b
+}
+
+func (s *Server) resolveAuthor(explicit, sessionID string) string {
+	sessionAuthor := ""
+	if session, err := s.store.GetSession(sessionID); err == nil {
+		sessionAuthor = session.Author
+	}
+	return provenance.Resolve(explicit, sessionAuthor)
 }

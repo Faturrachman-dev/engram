@@ -31,6 +31,7 @@ import (
 	"github.com/Gentleman-Programming/engram/v3/internal/diagnostic"
 	"github.com/Gentleman-Programming/engram/v3/internal/memorypolicy"
 	projectpkg "github.com/Gentleman-Programming/engram/v3/internal/project"
+	"github.com/Gentleman-Programming/engram/v3/internal/provenance"
 	"github.com/Gentleman-Programming/engram/v3/internal/store"
 	"github.com/Gentleman-Programming/engram/v3/internal/timeutil"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -563,7 +564,7 @@ Content format: **What**, **Why**, **Where**, **Learned** (omit if none). Title:
 					mcp.Description("Optional topic identifier for upserts (e.g. architecture/auth-model). Reuses and updates the latest observation in same project+scope."),
 				),
 				mcp.WithString("author",
-					mcp.Description("Who authored this memory, as agent/model (e.g. 'claude-code/opus-4.8', 'pi/deepseek-v4-pro'). Falls back to the ENGRAM_AUTHOR env var when unset."),
+					mcp.Description("Runtime-injected provenance; automatic from the host/session. Agents should omit this field."),
 				),
 				mcp.WithString("project",
 					mcp.Description("Optional explicit project for this memory. Accepted only when backed by known context (existing project, matching session, repo config, or ambiguous-project recovery); invalid or unbacked names fail loudly."),
@@ -867,6 +868,7 @@ Content format: **What**, **Why**, **Where**, **Learned** (omit if none). Title:
 	if shouldRegister("mem_session_summary", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_session_summary",
+				mcp.WithString("author", mcp.Description("Runtime-injected provenance; agents should omit this field.")),
 				mcp.WithTitleAnnotation("Save Session Summary"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -900,6 +902,7 @@ Content sections: ## Goal, ## Instructions (user preferences/constraints; skip i
 	if shouldRegister("mem_session_start", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_session_start",
+				mcp.WithString("author", mcp.Description("Runtime-injected provenance; agents should omit this field.")),
 				mcp.WithDescription("Register a caller-provided session ID. Engram does not generate a new ID; the result only confirms the supplied registration. Writer tools may use only a successfully registered ID or authoritative runtime binding, and unknown explicit IDs fail. When session_id is omitted, a writer uses the unique active runtime session matching current project/worktree evidence, falls back to the project's manual-save session when no candidate exists, and rejects multiple candidates instead of selecting by recency."),
 				mcp.WithDeferLoading(true),
 				mcp.WithTitleAnnotation("Start Session"),
@@ -946,6 +949,7 @@ Content sections: ## Goal, ## Instructions (user preferences/constraints; skip i
 	if shouldRegister("mem_capture_passive", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_capture_passive",
+				mcp.WithString("author", mcp.Description("Runtime-injected provenance; agents should omit this field.")),
 				mcp.WithDeferLoading(true),
 				mcp.WithTitleAnnotation("Capture Learnings"),
 				mcp.WithReadOnlyHintAnnotation(false),
@@ -1644,9 +1648,6 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 		scope, _ := req.GetArguments()["scope"].(string)
 		topicKey, _ := req.GetArguments()["topic_key"].(string)
 		author, _ := req.GetArguments()["author"].(string)
-		if strings.TrimSpace(author) == "" {
-			author = strings.TrimSpace(os.Getenv("ENGRAM_AUTHOR"))
-		}
 		projectChoice, _ := req.GetArguments()["project"].(string)
 		_, explicitProjectProvided := req.GetArguments()["project"]
 		projectChoiceReason, _ := req.GetArguments()["project_choice_reason"].(string)
@@ -1736,7 +1737,7 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 			Project:   project,
 			Scope:     scope,
 			TopicKey:  topicKey,
-			Author:    author,
+			Author:    resolveAuthor(s, author, sessionID),
 		})
 		if timing != nil {
 			timing.save = time.Since(saveStarted)
@@ -2626,7 +2627,7 @@ func handleSessionSummary(s *store.Store, cfg MCPConfig, activity *SessionActivi
 			Title:     fmt.Sprintf("Session summary: %s", project),
 			Content:   content,
 			Project:   project,
-			Author:    strings.TrimSpace(os.Getenv("ENGRAM_AUTHOR")),
+			Author:    resolveAuthor(s, stringArg(req, "author"), sessionID),
 		})
 		if err != nil {
 			return mcp.NewToolResultError("Failed to save session summary: " + err.Error()), nil
@@ -2667,7 +2668,7 @@ func handleSessionStart(s *store.Store, cfg MCPConfig, activity *SessionActivity
 		activity.RecordToolCall(defaultSessionID(project))
 		resolvedDirectory = runtimeSessionDirectory(resolvedDirectory)
 
-		if err := s.StartSession(id, project, resolvedDirectory); err != nil {
+		if err := s.StartSession(id, project, resolvedDirectory, resolveAuthor(s, stringArg(req, "author"), id)); err != nil {
 			if errors.Is(err, store.ErrSessionAlreadyEnded) {
 				result := errorWithMeta(
 					"session_already_ended",
@@ -2765,6 +2766,7 @@ func handleCapturePassive(s *store.Store, cfg MCPConfig, activity *SessionActivi
 			Content:   content,
 			Project:   project,
 			Source:    source,
+			Author:    resolveAuthor(s, stringArg(req, "author"), sessionID),
 		})
 		if err != nil {
 			return mcp.NewToolResultError("Passive capture failed: " + err.Error()), nil
@@ -3917,4 +3919,20 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return string(runes[:max]) + "..."
+}
+
+// resolveAuthor never guesses a model: host input, bound session, then runtime fallback.
+func resolveAuthor(s *store.Store, explicit, sessionID string) string {
+	sessionAuthor := ""
+	if sessionID != "" {
+		if session, err := s.GetSession(sessionID); err == nil {
+			sessionAuthor = session.Author
+		}
+	}
+	return provenance.Resolve(explicit, sessionAuthor)
+}
+
+func stringArg(req mcp.CallToolRequest, key string) string {
+	value, _ := req.GetArguments()[key].(string)
+	return value
 }

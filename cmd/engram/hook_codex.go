@@ -152,11 +152,15 @@ func codexContinuation(id, host string) bool {
 	return n != "" && strings.IndexFunc(n, func(r rune) bool { return r < '0' || r > '9' }) < 0
 }
 
-func codexRegisterAt(ctx context.Context, client *http.Client, base, host, cwd, project string) string {
+func codexRegisterAt(ctx context.Context, client *http.Client, base, host, cwd, project string, authors ...string) string {
 	if strings.TrimSpace(host) == "" {
 		return ""
 	}
-	body, _ := json.Marshal(map[string]any{"id": host, "directory": cwd, "project": project, "resume": true})
+	registration := map[string]any{"id": host, "directory": cwd, "project": project, "resume": true}
+	if len(authors) > 0 {
+		registration["author"] = authors[0]
+	}
+	body, _ := json.Marshal(registration)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/sessions", strings.NewReader(string(body)))
 	if err != nil {
 		return ""
@@ -174,8 +178,12 @@ func codexRegisterAt(ctx context.Context, client *http.Client, base, host, cwd, 
 	return codexAcknowledgedID(fields, host, true)
 }
 
-func codexRuntimeAt(ctx context.Context, client *http.Client, base, host, cwd, project, operation string) string {
-	body, _ := json.Marshal(map[string]string{"id": host, "directory": cwd, "project": project})
+func codexRuntimeAt(ctx context.Context, client *http.Client, base, host, cwd, project, operation string, authors ...string) string {
+	registration := map[string]string{"id": host, "directory": cwd, "project": project}
+	if len(authors) > 0 {
+		registration["author"] = authors[0]
+	}
+	body, _ := json.Marshal(registration)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/runtime-sessions/"+operation, strings.NewReader(string(body)))
 	if err != nil {
 		return ""
@@ -237,13 +245,16 @@ func runCodexLifecycleContext(ctx context.Context, action string, data []byte, b
 	if !ok {
 		return ""
 	}
+	var payload map[string]json.RawMessage
+	_ = json.Unmarshal(data, &payload)
+	author := resolveCodexHookAuthor(payload)
 	switch action {
 	case "codex-register":
-		return codexRegisterAt(ctx, client, base, in.SessionID, in.CWD, project)
+		return codexRegisterAt(ctx, client, base, in.SessionID, in.CWD, project, author)
 	case "codex-resolve":
-		return codexRuntimeAt(ctx, client, base, in.SessionID, in.CWD, project, "resolve")
+		return codexRuntimeAt(ctx, client, base, in.SessionID, in.CWD, project, "resolve", author)
 	case "codex-session-end":
-		_ = codexRuntimeAt(ctx, client, base, in.SessionID, in.CWD, project, "end")
+		_ = codexRuntimeAt(ctx, client, base, in.SessionID, in.CWD, project, "end", author)
 	}
 	return ""
 }

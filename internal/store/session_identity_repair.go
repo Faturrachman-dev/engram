@@ -79,8 +79,8 @@ func (s *Store) ApplySessionIdentityRepair(plan SessionIdentityRepairPlan) (Sess
 			return errors.New("session identity repair evidence changed since plan")
 		}
 		result.SessionIdentityRepairPlan = current.plan
-		insert, err := s.execHook(tx, `INSERT INTO sessions(id,project,ownership_mode,directory,started_at,ended_at,summary,runtime_lease_expires_at,local_creation_project)
-			SELECT ?,project,ownership_mode,directory,started_at,ended_at,summary,runtime_lease_expires_at,local_creation_project FROM sessions WHERE id=?`, plan.ReplacementID, plan.SourceID)
+		insert, err := s.execHook(tx, `INSERT INTO sessions(id,project,ownership_mode,directory,started_at,ended_at,summary,runtime_lease_expires_at,local_creation_project,author)
+			SELECT ?,project,ownership_mode,directory,started_at,ended_at,summary,runtime_lease_expires_at,local_creation_project,author FROM sessions WHERE id=?`, plan.ReplacementID, plan.SourceID)
 		if err := identityAffected(insert, err, 1, "insert canonical session"); err != nil {
 			return err
 		}

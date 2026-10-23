@@ -1,86 +1,61 @@
 # Maintainer Handoff
 
-This document transfers the current local-fork context to another agent or
-machine. It describes the state of this fork, not the upstream project's
-release state.
-
 ## Authoritative checkout
 
-Work from this Git repository only. The Codex/Claude plugin caches and Go
-module cache are generated installation copies; do not edit them as a source
-of truth.
+This Engram fork is based on upstream v3.3.0.
+The installed executable and plugin caches are deployment artifacts, not source.
+Do not recreate the removed `engram-src` duplicate worktree.
 
-- Fork remote: `https://github.com/Faturrachman-dev/engram.git`
-- Upstream remote: `https://github.com/Gentleman-Programming/engram.git`
-- Active branch: `feat/mem-update-project-reassign`
-- Latest local-and-pushed commit: `465e81a feat(provenance): record author across agent integrations`
+## Local behavior to preserve
 
-The previous `engram-src` duplicate worktree was intentionally removed. Do not
-recreate or use it for development.
+- Minimal-memory mode skips automatic post-save candidate scans, bounds compact
+  search results, and leaves implicit prompt capture off.
+- Compact memory policy stays aligned across supported hosts. Codex prompt
+  capture is opt-in; home-directory Claude sessions use shared ownership.
+- `/dashboard`, browser CORS, `/projects/stats`, and expanded `/stats` remain.
+- `ENGRAM_AGENT_CLI=pi` supports semantic conflict scans.
+- `mem_update(project=...)` is **not supported**: its implementation was reverted
+  in `c6ee4c2`. Do not recommend the old reassignment patch for this v3 checkout.
 
-## What this branch adds
+## Automatic author provenance
 
-The branch contains the following local work on top of upstream:
+Observation writes accept runtime metadata, then inherit the registered session's
+`author`, then consult Paseo runtime state and `ENGRAM_AUTHOR`. Unknown models
+remain unknown; do not invent a precise model or backfill historical rows.
 
-1. `mem_update` supports a validated `project` argument, allowing one
-   observation to be reassigned without raw SQLite edits.
-2. `/stats` includes `total_created` and `max_observation_id`.
-3. The HTTP server serves a dashboard at `/dashboard`, redirects `/` there,
-   enables browser CORS, and exposes `GET /projects/stats` for project counts.
-4. Observations support author provenance end-to-end:
-   - `mem_save.author` is accepted by MCP.
-   - When omitted, `ENGRAM_AUTHOR` is used.
-   - SQLite, imports, API responses, and Obsidian export retain `author`.
-   - The dashboard shows author information.
-5. Pi integration sets authors to `pi/<model-id>` when the active model is
-   available, otherwise it uses `ENGRAM_AUTHOR`.
-6. `ENGRAM_AGENT_CLI=pi` is supported for semantic conflict scanning. The Pi
-   runner shells out to the local `pi` CLI and uses that machine's configured
-   provider/model.
+Claude/Codex Go hooks replace model-authored provenance on save, summary, passive
+capture, and session registration. They resolve trusted hook metadata, bounded
+transcript tails, and host configuration. Paseo's automatically generated launch
+labels carry `ENGRAM_AUTHOR_SOURCE=paseo` so hooks can refresh them from live
+agent state after a model change; explicitly configured overrides remain fixed.
 
-## Architecture landmarks
+Pi and OMP read provider/model from live execution context. The Pi adapter
+propagates provenance through registration, normal and passive saves, summaries,
+and compaction archives. `plugin/omp` contains the separate MCP + input-rewriting
+extension integration; do not load the Pi adapter into OMP.
 
-- `cmd/engram/main.go` — CLI command wiring and environment help.
-- `internal/mcp/mcp.go` — MCP schemas and tool handlers.
-- `internal/store/store.go` — SQLite schema, migrations, and observation
-  persistence.
-- `internal/llm/` — semantic conflict-scan runners; `pi.go` is the local Pi
-  runner.
-- `internal/server/server.go` — HTTP routes, dashboard delivery, and CORS.
-- `internal/server/dashboard/index.html` — embedded dashboard UI.
-- `plugin/pi/index.ts` — Pi integration and memory tool requests.
-- `plugin/codex/` and `plugin/claude-code/` — thin host-agent hooks. Keep
-  behavior and persistence policy in the Go server where possible.
+`POST /sessions` accepts optional `author`; nonempty registration refreshes it
+without clearing it on omission or changing ownership/terminal-state rules.
+`POST /sessions/{id}/summary` saves an observation without ending its session.
+See `docs/author-provenance.md` for the supported contract.
 
-## Build and verification
+## Verification and deployment
 
-Run focused verification from the repository root:
+Source publication does not activate the installed runtime. See
+[rollout status](docs/PLAN-auto-author-and-upstream-sync.md) for pending steps
+and verification limits.
 
 ```powershell
-go test ./internal/llm ./internal/mcp ./internal/store ./internal/server
+go test ./cmd/engram ./internal/mcp ./internal/store ./internal/server ./internal/provenance
+node --test plugin/pi/test/author-provenance.test.mjs plugin/omp/engram.test.mjs
 ```
 
-Rebuild the local executable after changing Go code, then restart MCP clients
-or their sessions. The installed binary is deliberately separate from the
-source checkout; never modify its generated plugin-cache files as a substitute
-for rebuilding from this repository.
+On Windows, select Git Bash rather than the WSL launcher for shell-based tests.
+After installing a binary, restart `engram serve` as well as MCP clients; replacing
+an executable does not update running processes. Preserve live stores with a
+SQLite online backup before migrations. Never commit binaries, databases,
+credentials, or agent caches.
 
-## Working conventions
-
-- Use Conventional Commits and keep the branch name in `type/description`
-  format. The repository ruleset rejects invalid messages.
-- Do not commit generated binaries, databases, credentials, or agent caches.
-- Preserve author provenance as an agent/model label, never as a credential or
-  captured request payload.
-- Before changing a plugin hook, read `skills/plugin-thin/SKILL.md`; before
-  changing persistence or project resolution, read
-  `skills/business-rules/SKILL.md`.
-
-## Follow-up work worth checking
-
-- `DOCS.md` still describes `ENGRAM_AGENT_CLI` as accepting only `claude` and
-  `opencode`; update it when preparing this branch for broader review.
-- Add focused MCP/store tests for author migration and persistence if this
-  branch will be proposed upstream.
-- Rebuild and smoke-test the installed executable on each machine after pulling
-  this branch; the executable itself is intentionally not committed.
+The upstream v3.5.2 rebase remains optional and has not been performed. Keep it
+separate from provenance changes: shared compact-search projection, host binding,
+HOME capture guards, and minimal-memory policy require conflict review.

@@ -223,13 +223,13 @@ For Claude Code, rerunning setup updates the marketplace and the user-scope `eng
 
 Treat Engram as a curated project memory, not a transcript sink. Use this operating contract throughout the session.
 
-1. **Orient before writing.** Start with `mem_current_project` to confirm the resolved project and its source. At the start of related work, use `mem_context` and `mem_search` to recover the relevant history.
-2. **Search before repeating.** Before revisiting a decision, bug, convention, or request that may already be known, search with focused terms. Search results are previews, not the complete record.
-3. **Retrieve progressively.** Use `mem_search` for candidates, `mem_timeline` when surrounding session context matters, and `mem_get_observation` before relying on a full observation.
-4. **Save significant knowledge deliberately.** Save completed bug fixes, decisions, discoveries, configuration changes, patterns, and durable user constraints with `mem_save`. Do not capture raw tool output or every conversational turn.
-5. **Keep evolving knowledge stable.** Give an evolving topic a stable `topic_key` such as `architecture/auth-model`; reuse it to update that topic rather than creating competing memories. Use `mem_suggest_topic_key` when the key is unclear.
-6. **Leave a handoff.** Before ending a session, save a `mem_session_summary` with the goal, instructions, discoveries, accomplished work, next steps, and relevant files.
-7. **Recover after compaction.** Persist the compacted handoff with `mem_session_summary` first. Then call `mem_context` to recover recent session history before continuing.
+1. **Retrieve when needed.** Reuse sufficient injected context; otherwise search for missing history and fetch full observations only when previews are insufficient.
+2. **Save outcomes, not activity.** Keep durable decisions, preferences, and verified fixes. Omit routine probes, test passes, raw output, and secrets.
+3. **Keep topics stable.** Group related outcomes and reuse their `topic_key` or observation ID. Route each memory to its semantic project owner.
+4. **Preserve runtime identity.** Reuse the registered session; never invent one. Supported hooks/adapters supply `author` automatically, so agents should omit it.
+5. **Checkpoint only at boundaries.** Save a summary at genuine session close or compaction, not after normal replies. Retrieve recovery context only if missing.
+
+See [Minimal Memory Workflow](docs/PRD-minimal-agent-memory-workflow.md) for mode and privacy contracts, and [Author Provenance](docs/author-provenance.md) for attribution and deployment limits.
 
 ### When Git initialization changes the detected project
 

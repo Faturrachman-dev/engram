@@ -21,6 +21,7 @@ func (s *Server) handleRuntimeSession(w http.ResponseWriter, r *http.Request) {
 		Directory     string `json:"directory"`
 		OwnershipMode string `json:"ownership_mode"`
 		Summary       string `json:"summary"`
+		Author        string `json:"author"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -41,7 +42,7 @@ func (s *Server) handleRuntimeSession(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/runtime-sessions/end" {
 		id, err = s.store.EndRuntimeSession(body.ID, body.Project, directory, body.OwnershipMode, body.Summary)
 	} else {
-		id, err = s.store.ResolveRuntimeSessionWithOwnershipMode(body.ID, body.Project, directory, body.OwnershipMode)
+		id, err = s.store.ResolveRuntimeSessionWithOwnershipMode(body.ID, body.Project, directory, body.OwnershipMode, body.Author)
 	}
 	if err != nil {
 		status := http.StatusInternalServerError

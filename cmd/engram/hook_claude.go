@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Gentleman-Programming/engram/v3/internal/provenance"
 	"github.com/Gentleman-Programming/engram/v3/internal/store"
 )
 
@@ -104,7 +105,7 @@ func guardClaudePreToolUse(input []byte) []byte {
 	if !idOK || !cwdOK {
 		return claudePreToolUseDeny("Claude " + errHookSessionUnconfirmed.Error())
 	}
-	if err := confirmHookSession(id, cwd, true); err != nil {
+	if err := confirmHookSession(id, cwd, true, resolveClaudeHookAuthor(payload)); err != nil {
 		return hookSessionConfirmationDeny("Claude", err)
 	}
 	return transformClaudePreToolUse(input)
@@ -117,7 +118,7 @@ func hookSessionConfirmationDeny(agent string, err error) []byte {
 	return claudePreToolUseDeny(agent + " " + errHookSessionUnconfirmed.Error())
 }
 
-func confirmHookSession(id, cwd string, projectOwned bool) (confirmationErr error) {
+func confirmHookSession(id, cwd string, projectOwned bool, authors ...string) (confirmationErr error) {
 	base, client := hookEndpointClient("")
 	if base == "" {
 		return errHookSessionUnconfirmed
@@ -140,6 +141,9 @@ func confirmHookSession(id, cwd string, projectOwned bool) (confirmationErr erro
 		return errHookSessionUnconfirmed
 	}
 	registration := map[string]string{"id": id, "project": project, "directory": cwd}
+	if len(authors) > 0 {
+		registration["author"] = authors[0]
+	}
 	if projectOwned {
 		registration["ownership_mode"] = "project_owned"
 	}
@@ -172,6 +176,12 @@ func confirmHookSession(id, cwd string, projectOwned bool) (confirmationErr erro
 // updatedInput to replace the tool's untrusted model-provided session reference.
 // Invalid hook input is denied, rather than allowing a write whose session cannot be bound.
 func transformClaudePreToolUse(input []byte) []byte {
+	var payload map[string]json.RawMessage
+	_ = json.Unmarshal(input, &payload)
+	return transformPreToolUseWithAuthor(input, resolveClaudeHookAuthor(payload))
+}
+
+func transformPreToolUseWithAuthor(input []byte, author string) []byte {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return claudePreToolUseDeny("malformed authoritative Claude hook input")
@@ -212,6 +222,12 @@ func transformClaudePreToolUse(input []byte) []byte {
 			return claudePreToolUseDeny("cannot bind authoritative Claude session_id")
 		}
 		toolInput[field] = boundSessionID
+	}
+	if hookToolAcceptsAuthor(toolName) {
+		delete(toolInput, "author") // Never trust the model-provided provenance.
+		if author != "" {
+			toolInput["author"], _ = json.Marshal(author)
+		}
 	}
 	updatedInput, err := json.Marshal(toolInput)
 	if err != nil {
@@ -267,7 +283,7 @@ func transformCodexPreToolUse(input []byte) []byte {
 	if !isClaudeEngramWriteOrSessionTool(toolName) {
 		return []byte("{}")
 	}
-	response := transformClaudePreToolUse(input)
+	response := transformPreToolUseWithAuthor(input, resolveCodexHookAuthor(payload))
 	var envelope struct {
 		HookSpecificOutput map[string]json.RawMessage `json:"hookSpecificOutput"`
 	}
@@ -371,4 +387,19 @@ func claudePreToolUseDeny(reason string) []byte {
 	response.HookSpecificOutput.PermissionDecisionReason = reason
 	encoded, _ := json.Marshal(response)
 	return encoded
+}
+
+func resolveClaudeHookAuthor(payload map[string]json.RawMessage) string {
+	return provenance.HookAuthor("claude-code", payload)
+}
+func resolveCodexHookAuthor(payload map[string]json.RawMessage) string {
+	return provenance.HookAuthor("codex", payload)
+}
+func hookToolAcceptsAuthor(tool string) bool {
+	for _, name := range []string{"mem_save", "mem_session_start", "mem_session_summary", "mem_capture_passive"} {
+		if strings.HasSuffix(tool, "__"+name) {
+			return true
+		}
+	}
+	return false
 }
